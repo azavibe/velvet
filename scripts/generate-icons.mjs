@@ -14,29 +14,29 @@ import { fileURLToPath } from "url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ICONS_DIR = join(__dirname, "..", "src-tauri", "icons");
 
-// SVG icon design — Nord palette, Apple-style squircle, microphone + sound waves
+// SVG icon design — Velvet palette, Apple-style squircle, microphone + sound waves
 // Apple squircle path approximated as a continuous-curvature superellipse
 const SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <defs>
-    <!-- Nord Polar Night gradient background -->
+    <!-- Velvet gradient background (violet -> midnight) -->
     <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#3B4252"/>
-      <stop offset="100%" stop-color="#2E3440"/>
+      <stop offset="0%" stop-color="#7C3CFF"/>
+      <stop offset="100%" stop-color="#0B1020"/>
     </linearGradient>
-    <!-- Subtle Frost glow from top-left -->
+    <!-- Subtle cyan glow from top-left -->
     <radialGradient id="glow" cx="30%" cy="25%" r="70%">
-      <stop offset="0%" stop-color="#88C0D0" stop-opacity="0.15"/>
-      <stop offset="100%" stop-color="#2E3440" stop-opacity="0"/>
+      <stop offset="0%" stop-color="#00F5FF" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#0B1020" stop-opacity="0"/>
     </radialGradient>
-    <!-- Microphone body gradient — Snow Storm -->
+    <!-- Microphone body gradient — white -->
     <linearGradient id="mic" x1="50%" y1="0%" x2="50%" y2="100%">
-      <stop offset="0%" stop-color="#ECEFF4"/>
-      <stop offset="100%" stop-color="#D8DEE9"/>
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#E9F1FF"/>
     </linearGradient>
-    <!-- Frost accent for sound waves -->
+    <!-- Cyan accent for sound waves -->
     <linearGradient id="wave" x1="50%" y1="0%" x2="50%" y2="100%">
-      <stop offset="0%" stop-color="#88C0D0"/>
-      <stop offset="100%" stop-color="#81A1C1"/>
+      <stop offset="0%" stop-color="#00F5FF"/>
+      <stop offset="100%" stop-color="#7C3CFF"/>
     </linearGradient>
   </defs>
 
@@ -64,28 +64,28 @@ const SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
     C86 0, 128 0, 256 0Z
   " fill="url(#glow)"/>
 
-  <!-- Sound wave arcs (left) — Frost cyan -->
-  <path d="M148 210 Q125 256 148 302" fill="none" stroke="#88C0D0" stroke-opacity="0.5" stroke-width="13" stroke-linecap="round"/>
-  <path d="M115 175 Q82 256 115 337" fill="none" stroke="#88C0D0" stroke-opacity="0.25" stroke-width="13" stroke-linecap="round"/>
+  <!-- Sound wave arcs (left) — cyan -->
+  <path d="M148 210 Q125 256 148 302" fill="none" stroke="#00F5FF" stroke-opacity="0.6" stroke-width="13" stroke-linecap="round"/>
+  <path d="M115 175 Q82 256 115 337" fill="none" stroke="#00F5FF" stroke-opacity="0.3" stroke-width="13" stroke-linecap="round"/>
 
-  <!-- Sound wave arcs (right) — Frost cyan -->
-  <path d="M364 210 Q387 256 364 302" fill="none" stroke="#88C0D0" stroke-opacity="0.5" stroke-width="13" stroke-linecap="round"/>
-  <path d="M397 175 Q430 256 397 337" fill="none" stroke="#88C0D0" stroke-opacity="0.25" stroke-width="13" stroke-linecap="round"/>
+  <!-- Sound wave arcs (right) — cyan -->
+  <path d="M364 210 Q387 256 364 302" fill="none" stroke="#00F5FF" stroke-opacity="0.6" stroke-width="13" stroke-linecap="round"/>
+  <path d="M397 175 Q430 256 397 337" fill="none" stroke="#00F5FF" stroke-opacity="0.3" stroke-width="13" stroke-linecap="round"/>
 
-  <!-- Microphone body — Snow Storm white -->
+  <!-- Microphone body — white -->
   <rect x="222" y="140" width="68" height="150" rx="34" fill="url(#mic)"/>
 
   <!-- Microphone basket highlight -->
-  <ellipse cx="256" cy="145" rx="34" ry="10" fill="#ECEFF4" fill-opacity="0.12"/>
+  <ellipse cx="256" cy="145" rx="34" ry="10" fill="#FFFFFF" fill-opacity="0.2"/>
 
-  <!-- Microphone cradle (U shape) — Snow Storm -->
-  <path d="M196 260 Q196 340 256 340 Q316 340 316 260" fill="none" stroke="#D8DEE9" stroke-width="15" stroke-linecap="round"/>
+  <!-- Microphone cradle (U shape) — white -->
+  <path d="M196 260 Q196 340 256 340 Q316 340 316 260" fill="none" stroke="#E9F1FF" stroke-width="15" stroke-linecap="round"/>
 
   <!-- Microphone stand -->
-  <line x1="256" y1="340" x2="256" y2="388" stroke="#D8DEE9" stroke-width="15" stroke-linecap="round"/>
+  <line x1="256" y1="340" x2="256" y2="388" stroke="#E9F1FF" stroke-width="15" stroke-linecap="round"/>
 
   <!-- Microphone base -->
-  <line x1="218" y1="388" x2="294" y2="388" stroke="#D8DEE9" stroke-width="15" stroke-linecap="round"/>
+  <line x1="218" y1="388" x2="294" y2="388" stroke="#E9F1FF" stroke-width="15" stroke-linecap="round"/>
 </svg>`;
 
 const SIZES = [

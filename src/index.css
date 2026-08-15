@@ -35,51 +35,55 @@
   font-display: swap;
 }
 
-/* Nord color palette */
+/* Velvet color palette */
 @theme {
-  /* Polar Night — backgrounds */
-  --color-background: hsl(220, 16%, 22%);         /* #2E3440 */
-  --color-surface-0: hsl(220, 16%, 22%);           /* #2E3440 */
-  --color-surface-1: hsl(222, 16%, 28%);           /* #3B4252 */
-  --color-surface-2: hsl(220, 16%, 32%);           /* #434C5E */
-  --color-surface-3: hsl(220, 16%, 36%);           /* #4C566A */
-  --color-surface-raised: hsl(220, 16%, 40%);
+  /* Midnight — backgrounds */
+  --color-background: hsl(226, 49%, 8%);           /* #0B1020 */
+  --color-surface-0: hsl(226, 49%, 8%);            /* #0B1020 */
+  --color-surface-1: hsl(227, 46%, 14%);           /* #131A33 */
+  --color-surface-2: hsl(227, 43%, 19%);           /* #1B2444 */
+  --color-surface-3: hsl(229, 40%, 25%);           /* #262F58 */
+  --color-surface-raised: hsl(229, 38%, 30%);      /* #303B6A */
 
-  /* Snow Storm — text */
-  --color-foreground: hsl(219, 28%, 88%);          /* #D8DEE9 */
-  --color-foreground-bright: hsl(218, 27%, 92%);   /* #E5E9F0 */
-  --color-card: hsl(222, 16%, 28%);                /* #3B4252 */
-  --color-card-foreground: hsl(219, 28%, 88%);     /* #D8DEE9 */
-  --color-popover: hsl(222, 16%, 28%);             /* #3B4252 */
-  --color-popover-foreground: hsl(219, 28%, 88%);  /* #D8DEE9 */
+  /* Snow — text */
+  --color-foreground: hsl(218, 100%, 96%);         /* #E9F1FF */
+  --color-foreground-bright: hsl(0, 0%, 100%);     /* #FFFFFF */
+  --color-card: hsl(227, 46%, 14%);                /* #131A33 */
+  --color-card-foreground: hsl(218, 100%, 96%);    /* #E9F1FF */
+  --color-popover: hsl(227, 46%, 14%);             /* #131A33 */
+  --color-popover-foreground: hsl(218, 100%, 96%); /* #E9F1FF */
 
-  /* Frost — accent */
-  --color-primary: hsl(193, 43%, 67%);             /* #88C0D0 */
-  --color-primary-foreground: hsl(220, 16%, 22%);  /* #2E3440 */
-  --color-secondary: hsl(222, 16%, 28%);           /* #3B4252 */
-  --color-secondary-foreground: hsl(219, 28%, 88%);/* #D8DEE9 */
-  --color-accent: hsl(193, 43%, 67%);              /* #88C0D0 */
-  --color-accent-foreground: hsl(220, 16%, 22%);   /* #2E3440 */
-  --color-ring: hsl(193, 43%, 67%);                /* #88C0D0 */
-  --color-input: hsl(222, 16%, 28%);               /* #3B4252 */
+  /* Velvet — accent */
+  --color-primary: hsl(260, 100%, 62%);            /* #7C3CFF */
+  --color-primary-foreground: hsl(218, 100%, 96%); /* #E9F1FF */
+  --color-secondary: hsl(227, 46%, 14%);           /* #131A33 */
+  --color-secondary-foreground: hsl(218, 100%, 96%); /* #E9F1FF */
+  --color-accent: hsl(182, 100%, 50%);             /* #00F5FF */
+  --color-accent-foreground: hsl(226, 49%, 8%);    /* #0B1020 */
+  --color-ring: hsl(260, 100%, 62%);               /* #7C3CFF */
+  --color-input: hsl(227, 46%, 14%);               /* #131A33 */
 
   /* Muted */
-  --color-muted: hsl(222, 16%, 28%);               /* #3B4252 */
-  --color-muted-foreground: hsl(220, 16%, 46%);    /* ~#6A7690 lighter than #4C566A for readability */
+  --color-muted: hsl(227, 46%, 14%);               /* #131A33 */
+  --color-muted-foreground: hsl(226, 30%, 66%);    /* lighter navy-gray for readability */
 
-  /* Aurora — semantic */
-  --color-destructive: hsl(354, 42%, 56%);         /* #BF616A */
-  --color-destructive-foreground: hsl(218, 27%, 94%); /* #ECEFF4 */
-  --color-success: hsl(92, 28%, 65%);              /* #A3BE8C */
-  --color-success-foreground: hsl(220, 16%, 22%);  /* #2E3440 */
-  --color-warning: hsl(40, 71%, 73%);              /* #EBCB8B */
-  --color-warning-foreground: hsl(220, 16%, 22%);  /* #2E3440 */
+  /* Semantic */
+  --color-destructive: hsl(354, 78%, 62%);         /* red, kept distinct from recording pink */
+  --color-destructive-foreground: hsl(218, 100%, 96%); /* #E9F1FF */
+  --color-success: hsl(160, 84%, 45%);             /* emerald */
+  --color-success-foreground: hsl(226, 49%, 8%);   /* #0B1020 */
+  --color-warning: hsl(40, 90%, 60%);              /* amber */
+  --color-warning-foreground: hsl(226, 49%, 8%);   /* #0B1020 */
+
+  /* Recording — the floating overlay's active/recording state */
+  --color-recording: hsl(312, 100%, 58%);          /* #FF2BD6 */
+  --color-recording-foreground: hsl(0, 0%, 100%);  /* #FFFFFF */
 
   /* Borders */
-  --color-border: hsl(220, 16%, 32%);              /* #434C5E */
-  --color-border-subtle: hsl(222, 16%, 28%);       /* #3B4252 */
-  --color-border-hover: hsl(220, 16%, 36%);        /* #4C566A */
-  --color-border-active: hsl(193, 43%, 67%);       /* #88C0D0 */
+  --color-border: hsl(227, 43%, 19%);              /* #1B2444 */
+  --color-border-subtle: hsl(227, 46%, 14%);       /* #131A33 */
+  --color-border-hover: hsl(229, 40%, 25%);        /* #262F58 */
+  --color-border-active: hsl(260, 100%, 62%);      /* #7C3CFF */
 
   /* Border radii — semantic tokens
      rounded-control : buttons, inputs, dropdowns, toasts, containers
@@ -150,14 +154,14 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: hsl(222, 16%, 28%);
+  background: hsl(228, 38%, 14%);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: hsl(220, 16%, 36%);
+  background: hsl(232, 32%, 25%);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(220, 16%, 42%);
+  background: hsl(233, 32%, 30%);
 }

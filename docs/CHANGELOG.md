@@ -2,13 +2,22 @@
 
 ## [Unreleased]
 
+## [0.8.7] - 2026-08-15
+
 ### Highlights
 
+- Replaced the app's Nord color theme with a new Velvet theme (deep midnight, violet, cyan, and pink) that stays legible over both light and dark desktop backgrounds
+- The floating microphone button now glows violet while idle and turns pink while recording, with a bright ring so it stands out on any wallpaper
+- New app and tray icon matching the Velvet theme
 - The floating microphone button no longer grows into a large invisible click-blocking area when moved between displays with different scaling
 
 ### Fixes
 
 - Stopped restoring persisted size for the fixed-size overlay window, preventing mixed-DPI physical dimensions from compounding across launches. The overlay still restores its saved position, while the resizable settings window continues restoring both position and size.
+
+### Internal
+
+- Repointed the updater endpoint and public key, and the release notes' changelog link, at this fork instead of upstream
 
 ## [0.8.6] - 2026-07-31
 

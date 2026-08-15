@@ -43,7 +43,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Whisperi ${{ github.ref_name }}'
-          releaseBody: 'See [CHANGELOG](https://github.com/xarthurx/whisperi/blob/main/docs/CHANGELOG.md) for details.'
+          releaseBody: 'See [CHANGELOG](https://github.com/azavibe/velvet/blob/main/docs/CHANGELOG.md) for details.'
           releaseDraft: false
           prerelease: false
           updaterJsonPreferNsis: true

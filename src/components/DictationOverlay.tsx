@@ -180,7 +180,7 @@ function DictationOverlayInner() {
             borderRadius: "50%",
             transform: `scale(${isRecording ? levelScale : 1})`,
             background: isRecording
-              ? `radial-gradient(circle, hsl(354, 42%, 56%, ${0.2 + audioLevel * 0.3}), transparent 70%)`
+              ? `radial-gradient(circle, hsl(312, 100%, 58%, ${0.2 + audioLevel * 0.3}), transparent 70%)`
               : "transparent",
           }}
         />
@@ -194,10 +194,10 @@ function DictationOverlayInner() {
           style={!isRecording && !isProcessing ? { animation: "breathe 3s ease-in-out infinite" } : undefined}
           className={`relative w-12 h-12 rounded-full border-2 transition-all duration-200 ${
             isProcessing
-              ? "bg-surface-1 border-border-subtle cursor-wait shadow-md shadow-black/40"
+              ? "bg-surface-1 border-foreground/30 cursor-wait shadow-md shadow-black/50"
               : isRecording
-                ? "bg-destructive border-destructive shadow-lg shadow-destructive/20"
-                : "bg-surface-1 border-background shadow-md shadow-black/40 hover:border-border-subtle hover:bg-surface-2 hover:shadow-lg hover:shadow-primary/10 active:scale-95"
+                ? "bg-recording border-foreground-bright shadow-lg shadow-recording/40"
+                : "bg-primary border-foreground-bright/80 shadow-md shadow-black/50 hover:border-foreground-bright hover:shadow-lg hover:shadow-primary/40 active:scale-95"
           }`}
           aria-label={
             isProcessing
@@ -212,7 +212,7 @@ function DictationOverlayInner() {
               <LoadingDots />
             ) : (
               <Mic
-                className={`w-6 h-6 ${isRecording ? "text-destructive-foreground" : "text-primary/60"}`}
+                className={`w-6 h-6 ${isRecording ? "text-recording-foreground" : "text-foreground-bright"}`}
                 style={isRecording ? { animation: "pulse-mic 1.2s ease-in-out infinite" } : undefined}
               />
             )}
