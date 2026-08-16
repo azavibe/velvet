@@ -6,10 +6,9 @@
 
 ### Highlights
 
-- New Conversations feature: a live copilot for calls. Start a conversation and it listens to both you and the other side, transcribes both separately in real time, and suggests what to say next
+- New Conversations feature: a live copilot for calls, in Settings → Conversations. Start a conversation and it listens to both you and the other side, transcribes both separately in real time, and suggests what to say next — right there in that panel
 - Suggestions come from a persona — a short system prompt with a name. Four are included (Sales, Support, Language practice, Interview prep) and you can write your own
-- Choose whether suggestions appear automatically whenever the other side stops talking, or only when you press a hotkey — the hotkey always works either way
-- The floating overlay expands into a compact transcript + suggestion panel for the length of a conversation, then collapses back down when it ends
+- Choose whether suggestions appear automatically whenever the other side stops talking, or only when you press a hotkey — the hotkey always works either way, even while Settings is closed
 - Conversation history is kept indefinitely and viewable from Settings → Conversations; delete individual conversations from there
 
 ### How it works
@@ -17,6 +16,7 @@
 - Runs entirely on Groq: `whisper-large-v3-turbo` for transcription, `llama-3.1-8b-instant` (or whichever Groq model you pick) for suggestions — one API key, no other provider required
 - The two sides are captured as genuinely separate audio channels — your microphone, and a system-audio loopback of whatever the call app plays through your speakers — rather than being split apart after the fact
 - Each channel is chunked on pauses in speech (not on a timer), so a finished chunk from the other side is itself the "their turn ended" signal used for automatic suggestions
+- Lives entirely in the Settings window (not the floating overlay) — the underlying conversation state survives switching Settings tabs or closing the Settings window, so the hotkey keeps working
 
 ### Known limitations
 

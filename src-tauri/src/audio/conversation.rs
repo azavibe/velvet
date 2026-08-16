@@ -39,8 +39,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::recorder::{AudioError, TARGET_SAMPLE_RATE, encode_wav, is_speechless, negotiate_config, resample};
 
 /// Silence needed after speech before a chunk is finalized and sent for
-/// transcription. Short enough to feel responsive turn-to-turn.
-const SILENCE_HANGOVER_MS: u64 = 700;
+/// transcription. Every extra millisecond here is a millisecond added to
+/// "they stop talking" → "suggestion appears" latency, on top of the two
+/// network round trips (Groq transcription, then Groq reasoning) that
+/// follow — kept short and worth revisiting if it clips real speech.
+const SILENCE_HANGOVER_MS: u64 = 500;
 /// Hard cap so a long monologue still yields chunks instead of buffering
 /// (and delaying transcription of) an entire unbroken ramble.
 const MAX_CHUNK_MS: u64 = 20_000;

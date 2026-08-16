@@ -489,3 +489,24 @@ export async function onConversationError(
 ): Promise<UnlistenFn> {
   return listen<ConversationErrorEvent>("conversation-error", (e) => callback(e.payload));
 }
+
+export interface ConversationStartedEvent {
+  conversation_id: number;
+  persona_name: string | null;
+}
+
+/** Broadcast to every window regardless of which one issued the start/stop
+ *  command, so any window's UI reflects the true global state — there's
+ *  exactly one conversation possible at a time (the backend audio capture
+ *  is a single global resource). */
+export async function onConversationStarted(
+  callback: (payload: ConversationStartedEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<ConversationStartedEvent>("conversation-started", (e) => callback(e.payload));
+}
+
+export async function onConversationStopped(
+  callback: (conversationId: number) => void,
+): Promise<UnlistenFn> {
+  return listen<number>("conversation-stopped", (e) => callback(e.payload));
+}

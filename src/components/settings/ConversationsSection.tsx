@@ -16,7 +16,7 @@ import {
   type AudioDevice,
   type ConversationSummary,
 } from "@/services/tauriApi";
-import { useConversation } from "@/hooks/useConversation";
+import type { useConversation } from "@/hooks/useConversation";
 import type { SectionProps } from "./types";
 
 const PERSONA_ICONS: Record<string, ComponentType<{ className?: string }>> = {
@@ -28,24 +28,19 @@ function PersonaIcon({ name, className }: { name: string; className?: string }) 
   return <Icon className={className} />;
 }
 
-export default function ConversationsSection({ settings, update, toast }: SectionProps) {
+interface ConversationsSectionProps extends SectionProps {
+  /** Owned by SettingsPanel (mounted for the app's whole lifetime, tab
+   *  switches included) so the conversation and its hotkey survive
+   *  navigating away from this tab or the window being hidden. */
+  conversation: ReturnType<typeof useConversation>;
+}
+
+export default function ConversationsSection({ settings, update, conversation }: ConversationsSectionProps) {
   const { t } = useTranslation();
   const [devices, setDevices] = useState<AudioDevice[]>([]);
   const [history, setHistory] = useState<ConversationSummary[]>([]);
   const [consentRequested, setConsentRequested] = useState(false);
   const [expandedPersonaId, setExpandedPersonaId] = useState<string | null>(null);
-
-  const reasoningApiKey =
-    (settings[`${settings.reasoningProvider}ApiKey` as keyof typeof settings] as string) ?? "";
-
-  const conversation = useConversation({
-    settings,
-    reasoningModel: settings.reasoningModel,
-    reasoningProvider: settings.reasoningProvider,
-    reasoningApiKey,
-    groqApiKey: settings.groqApiKey,
-    onToast: (props) => toast?.({ ...props, variant: "destructive" }),
-  });
 
   useEffect(() => {
     listAudioDevices().then(setDevices).catch(() => {});

@@ -7,6 +7,8 @@ import {
   onConversationUtterance,
   onConversationSuggestion,
   onConversationError,
+  onConversationStarted,
+  onConversationStopped,
   type ConversationUtteranceEvent,
   type ConversationSuggestionEvent,
 } from "@/services/tauriApi";
@@ -96,11 +98,26 @@ export function useConversation({
       if (payload.conversation_id !== conversationIdRef.current) return;
       onToast?.({ description: payload.message });
     });
+    // Broadcast regardless of which window issued the command — lets any
+    // window's UI (and its hotkey registration) pick up a conversation
+    // started elsewhere, or notice one it thought was running has ended.
+    const unlistenStarted = onConversationStarted((payload) => {
+      if (conversationIdRef.current != null) return;
+      setTranscript([]);
+      setSuggestion(null);
+      setConversationId(payload.conversation_id);
+    });
+    const unlistenStopped = onConversationStopped((stoppedId) => {
+      if (stoppedId !== conversationIdRef.current) return;
+      setConversationId(null);
+    });
 
     return () => {
       unlistenUtterance.then((fn) => fn());
       unlistenSuggestion.then((fn) => fn());
       unlistenError.then((fn) => fn());
+      unlistenStarted.then((fn) => fn());
+      unlistenStopped.then((fn) => fn());
     };
   }, [forceSuggestion, onToast]);
 

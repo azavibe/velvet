@@ -54,6 +54,19 @@ pub async fn start_conversation(
         return Err(e.to_string());
     }
 
+    // Broadcast to every window (not just the one that called this command)
+    // so any window's UI can adopt this conversation and the hotkey stays
+    // live regardless of which window is focused or visible.
+    #[derive(Clone, serde::Serialize)]
+    struct ConversationStartedPayload {
+        conversation_id: i64,
+        persona_name: Option<String>,
+    }
+    let _ = app.emit(
+        "conversation-started",
+        ConversationStartedPayload { conversation_id, persona_name: persona_name.clone() },
+    );
+
     let rx = match conv_state.take_chunk_receiver() {
         Some(rx) => rx,
         None => {
@@ -135,6 +148,7 @@ async fn handle_conversation_chunk(app: AppHandle, conversation_id: i64, chunk: 
 
 #[tauri::command]
 pub fn stop_conversation(
+    app: AppHandle,
     conv_state: State<'_, Arc<ConversationState>>,
     db: State<'_, Database>,
     conversation_id: i64,
@@ -147,6 +161,7 @@ pub fn stop_conversation(
     // for it can arrive slightly after this command returns.
     ConversationCapture::stop(&**conv_state).str_err()?;
     db.end_conversation(conversation_id, title.as_deref()).str_err()?;
+    let _ = app.emit("conversation-stopped", conversation_id);
     Ok(())
 }
 
