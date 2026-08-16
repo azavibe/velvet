@@ -13,10 +13,10 @@ pub fn save_transcription(
     agent_name: Option<String>,
     error: Option<String>,
     duration_ms: Option<i64>,
-    /// Raw WAV bytes for the recording, when the caller wants it archived
-    /// to disk (History & Analytics). Written in the background — this
-    /// command returns as soon as the row is saved, before the file
-    /// write/`audio_path` update finish.
+    // Raw WAV bytes for the recording, when the caller wants it archived
+    // to disk (History & Analytics). Written in the background — this
+    // command returns as soon as the row is saved, before the file
+    // write/`audio_path` update finish.
     audio_data: Option<Vec<u8>>,
 ) -> Result<i64, String> {
     let id = db
