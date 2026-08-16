@@ -199,7 +199,7 @@ function SettingsPanelInner() {
             {section === "developer" && (
               <DeveloperSection settings={settings} update={update} toast={toast} />
             )}
-            {section === "statistics" && <StatisticsSection />}
+            {section === "statistics" && <StatisticsSection toast={toast} />}
             {section === "about" && <AboutSection />}
           </div>
         </div>

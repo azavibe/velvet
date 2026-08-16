@@ -23,6 +23,13 @@ pub struct Transcription {
     pub processing_method: String,
     pub agent_name: Option<String>,
     pub error: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub word_count: Option<i64>,
+    /// Local WAV file, if the recording was archived to disk. Set by a
+    /// background write shortly after the row is created (see
+    /// `update_transcription_audio_path`), so a just-saved row can briefly
+    /// have this as `None`.
+    pub audio_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -49,6 +56,15 @@ pub struct ConversationSummary {
     pub ended_at: Option<String>,
     pub title: Option<String>,
     pub persona_name: Option<String>,
+    /// Local WAV files for each channel, if archived (see
+    /// `update_conversation_audio_paths`). Either can be `None` if that
+    /// channel never captured any audio during the call.
+    pub audio_path_me: Option<String>,
+    pub audio_path_them: Option<String>,
+    /// First utterance's text, for a collapsed-card preview without
+    /// fetching the full transcript. `None` for a conversation with no
+    /// utterances (e.g. started and immediately stopped).
+    pub snippet: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -157,7 +173,7 @@ impl Database {
     pub fn get_transcriptions(&self, limit: u32, offset: u32) -> Result<Vec<Transcription>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, timestamp, original_text, processed_text, is_processed, processing_method, agent_name, error
+            "SELECT id, timestamp, original_text, processed_text, is_processed, processing_method, agent_name, error, duration_ms, word_count, audio_path
              FROM transcriptions ORDER BY id DESC LIMIT ?1 OFFSET ?2",
         )?;
 
@@ -171,21 +187,53 @@ impl Database {
                 processing_method: row.get(5)?,
                 agent_name: row.get(6)?,
                 error: row.get(7)?,
+                duration_ms: row.get(8)?,
+                word_count: row.get(9)?,
+                audio_path: row.get(10)?,
             })
         })?;
 
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    /// Set once a dictation's audio has been written to disk (the write
+    /// happens in a background task after the row is already saved, so
+    /// this is a follow-up UPDATE rather than part of the initial INSERT).
+    pub fn update_transcription_audio_path(&self, id: i64, path: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE transcriptions SET audio_path = ?2 WHERE id = ?1",
+            rusqlite::params![id, path],
+        )?;
+        Ok(())
+    }
+
+    /// Deletes the row and, best-effort, its archived audio file. A missing
+    /// or already-deleted file is not an error — the row is the source of
+    /// truth for whether the recording ever existed.
     pub fn delete_transcription(&self, id: i64) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let audio_path: Option<String> = conn
+            .query_row("SELECT audio_path FROM transcriptions WHERE id = ?1", [id], |r| r.get(0))
+            .ok();
         conn.execute("DELETE FROM transcriptions WHERE id = ?1", [id])?;
+        if let Some(path) = audio_path.filter(|p| !p.is_empty()) {
+            let _ = std::fs::remove_file(path);
+        }
         Ok(())
     }
 
     pub fn clear_transcriptions(&self) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let paths: Vec<String> = {
+            let mut stmt = conn.prepare("SELECT audio_path FROM transcriptions WHERE audio_path IS NOT NULL")?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
         conn.execute("DELETE FROM transcriptions", [])?;
+        for path in paths {
+            let _ = std::fs::remove_file(path);
+        }
         Ok(())
     }
 
@@ -340,8 +388,11 @@ impl Database {
     pub fn list_conversations(&self, limit: u32, offset: u32) -> Result<Vec<ConversationSummary>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, started_at, ended_at, title, persona_name
-             FROM conversations ORDER BY id DESC LIMIT ?1 OFFSET ?2",
+            "SELECT c.id, c.started_at, c.ended_at, c.title, c.persona_name,
+                    c.audio_path_me, c.audio_path_them,
+                    (SELECT text FROM conversation_utterances u
+                     WHERE u.conversation_id = c.id ORDER BY u.started_at_ms ASC, u.id ASC LIMIT 1) AS snippet
+             FROM conversations c ORDER BY c.id DESC LIMIT ?1 OFFSET ?2",
         )?;
         let rows = stmt.query_map(rusqlite::params![limit, offset], |row| {
             Ok(ConversationSummary {
@@ -350,6 +401,9 @@ impl Database {
                 ended_at: row.get(2)?,
                 title: row.get(3)?,
                 persona_name: row.get(4)?,
+                audio_path_me: row.get(5)?,
+                audio_path_them: row.get(6)?,
+                snippet: row.get(7)?,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -359,7 +413,11 @@ impl Database {
         let conn = self.conn.lock().unwrap();
 
         let conversation = conn.query_row(
-            "SELECT id, started_at, ended_at, title, persona_name FROM conversations WHERE id = ?1",
+            "SELECT c.id, c.started_at, c.ended_at, c.title, c.persona_name,
+                    c.audio_path_me, c.audio_path_them,
+                    (SELECT text FROM conversation_utterances u
+                     WHERE u.conversation_id = c.id ORDER BY u.started_at_ms ASC, u.id ASC LIMIT 1) AS snippet
+             FROM conversations c WHERE c.id = ?1",
             rusqlite::params![conversation_id],
             |row| {
                 Ok(ConversationSummary {
@@ -368,6 +426,9 @@ impl Database {
                     ended_at: row.get(2)?,
                     title: row.get(3)?,
                     persona_name: row.get(4)?,
+                    audio_path_me: row.get(5)?,
+                    audio_path_them: row.get(6)?,
+                    snippet: row.get(7)?,
                 })
             },
         )?;
@@ -413,8 +474,40 @@ impl Database {
         })
     }
 
+    /// Set once each channel's audio has been archived to disk (see
+    /// `ConversationAudioArchive` in commands/conversation.rs). Either path
+    /// may be `None` if that channel never captured anything, so both are
+    /// updated independently via `COALESCE` rather than overwriting a path
+    /// already recorded for the other channel.
+    pub fn update_conversation_audio_paths(
+        &self,
+        conversation_id: i64,
+        audio_path_me: Option<&str>,
+        audio_path_them: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE conversations SET
+                audio_path_me = COALESCE(?2, audio_path_me),
+                audio_path_them = COALESCE(?3, audio_path_them)
+             WHERE id = ?1",
+            rusqlite::params![conversation_id, audio_path_me, audio_path_them],
+        )?;
+        Ok(())
+    }
+
+    /// Deletes the row (and its utterances/suggestions) and, best-effort,
+    /// both archived audio files. A missing file is not an error.
     pub fn delete_conversation(&self, conversation_id: i64) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let audio_paths: Option<(Option<String>, Option<String>)> = conn
+            .query_row(
+                "SELECT audio_path_me, audio_path_them FROM conversations WHERE id = ?1",
+                rusqlite::params![conversation_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok();
+
         // Explicit cascade, not just relying on the FK pragma: belt-and-braces
         // in case a future connection opens without `PRAGMA foreign_keys = ON`.
         conn.execute(
@@ -429,6 +522,15 @@ impl Database {
             "DELETE FROM conversations WHERE id = ?1",
             rusqlite::params![conversation_id],
         )?;
+
+        if let Some((me, them)) = audio_paths {
+            if let Some(path) = me.filter(|p| !p.is_empty()) {
+                let _ = std::fs::remove_file(path);
+            }
+            if let Some(path) = them.filter(|p| !p.is_empty()) {
+                let _ = std::fs::remove_file(path);
+            }
+        }
         Ok(())
     }
 }

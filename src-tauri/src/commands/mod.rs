@@ -18,3 +18,13 @@ impl<T, E: std::fmt::Display> ResultExt<T> for Result<T, E> {
         self.map_err(|e| e.to_string())
     }
 }
+
+/// `{app_data}/recordings/`, created on first use. Shared by dictation and
+/// conversation audio archiving (History & Analytics).
+pub(crate) fn recordings_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    use tauri::Manager;
+    let base = app.path().app_data_dir().str_err()?;
+    let dir = base.join("recordings");
+    std::fs::create_dir_all(&dir).str_err()?;
+    Ok(dir)
+}

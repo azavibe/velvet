@@ -3,14 +3,104 @@
 //! generate on-demand suggestions from a persona prompt + the transcript
 //! so far.
 
-use std::sync::Arc;
+use std::fs::File;
+use std::io::BufWriter;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use super::ResultExt;
-use crate::audio::conversation::{ConversationCapture, ConversationChunk, ConversationState};
+use super::{ResultExt, recordings_dir};
+use crate::audio::conversation::{Channel, ConversationCapture, ConversationChunk, ConversationState};
+use crate::audio::recorder::TARGET_SAMPLE_RATE;
 use crate::database::{ConversationDetail, ConversationSummary, Database};
 use crate::reasoning::{self, ReasoningRequest};
+
+/// Streams each channel's transcribed chunks to its own WAV file on disk as
+/// the conversation runs, rather than buffering the whole session in
+/// memory — chunks arrive already resampled to `TARGET_SAMPLE_RATE`/mono
+/// (see `audio::conversation::to_chunk`), which is exactly the format
+/// written here, so no re-encoding is needed beyond decode-then-append.
+/// Writers open lazily on each channel's first chunk, so a channel that
+/// never captures anything (e.g. no one on the other end talks) leaves no
+/// file rather than an empty one.
+#[derive(Default)]
+pub struct ConversationAudioArchive {
+    me: Mutex<Option<hound::WavWriter<BufWriter<File>>>>,
+    them: Mutex<Option<hound::WavWriter<BufWriter<File>>>>,
+}
+
+fn wav_spec() -> hound::WavSpec {
+    hound::WavSpec {
+        channels: 1,
+        sample_rate: TARGET_SAMPLE_RATE,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    }
+}
+
+impl ConversationAudioArchive {
+    /// Appends one chunk's decoded samples to the given channel's file,
+    /// opening (and recording the path via `on_open`) on first use.
+    /// Best-effort throughout: a failure here should never take down
+    /// transcription, which is why every error just logs and returns.
+    fn append(&self, channel: Channel, wav_bytes: &[u8], path_for_new_writer: impl FnOnce() -> std::path::PathBuf, on_open: impl FnOnce(&std::path::Path)) {
+        let mutex = match channel {
+            Channel::Me => &self.me,
+            Channel::Them => &self.them,
+        };
+        let mut guard = match mutex.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        if guard.is_none() {
+            let path = path_for_new_writer();
+            match hound::WavWriter::create(&path, wav_spec()) {
+                Ok(w) => {
+                    on_open(&path);
+                    *guard = Some(w);
+                }
+                Err(e) => {
+                    log::error!("[Conversation] failed to open audio archive {:?}: {}", path, e);
+                    return;
+                }
+            }
+        }
+        let Some(writer) = guard.as_mut() else { return };
+        let mut reader = match hound::WavReader::new(std::io::Cursor::new(wav_bytes)) {
+            Ok(r) => r,
+            Err(e) => {
+                log::error!("[Conversation] failed to decode chunk for archiving: {}", e);
+                return;
+            }
+        };
+        for sample in reader.samples::<i16>() {
+            match sample {
+                Ok(s) => {
+                    let _ = writer.write_sample(s);
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = writer.flush();
+    }
+
+    /// Finalizes (patches the WAV header, flushes) and drops both writers.
+    /// Safe to call even if a writer was never opened, or was already
+    /// finalized — a late trailing chunk after stop() just has nothing to
+    /// append to and is dropped from the archive (still transcribed fine).
+    pub(crate) fn finalize(&self) {
+        if let Ok(mut g) = self.me.lock() {
+            if let Some(w) = g.take() {
+                let _ = w.finalize();
+            }
+        }
+        if let Ok(mut g) = self.them.lock() {
+            if let Some(w) = g.take() {
+                let _ = w.finalize();
+            }
+        }
+    }
+}
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -139,6 +229,37 @@ async fn handle_conversation_chunk(app: AppHandle, conversation_id: i64, chunk: 
     let channel_str = chunk.channel.as_str();
     let started_at_ms = chunk.started_at_ms;
 
+    // Archive regardless of transcription outcome — it's real audio that
+    // happened, even if this particular chunk fails to transcribe or comes
+    // back empty. Runs on a blocking thread since WAV decode + file I/O
+    // shouldn't happen on the async runtime.
+    {
+        let app_for_archive = app.clone();
+        let wav_for_archive = chunk.wav.clone();
+        let channel = chunk.channel;
+        tauri::async_runtime::spawn_blocking(move || {
+            let archive = app_for_archive.state::<ConversationAudioArchive>();
+            archive.append(
+                channel,
+                &wav_for_archive,
+                || {
+                    recordings_dir(&app_for_archive)
+                        .unwrap_or_else(|_| std::env::temp_dir())
+                        .join(format!("conversation-{conversation_id}-{}.wav", channel.as_str()))
+                },
+                |path| {
+                    let db = app_for_archive.state::<Database>();
+                    let path_str = path.to_string_lossy().to_string();
+                    let (me, them) = match channel {
+                        Channel::Me => (Some(path_str.as_str()), None),
+                        Channel::Them => (None, Some(path_str.as_str())),
+                    };
+                    let _ = db.update_conversation_audio_paths(conversation_id, me, them);
+                },
+            );
+        });
+    }
+
     let result = crate::transcription::cloud::transcribe_groq(
         chunk.wav,
         &api_key,
@@ -223,6 +344,12 @@ pub fn stop_conversation(
     ConversationCapture::stop(&**conv_state).str_err()?;
     db.end_conversation(conversation_id, title.as_deref()).str_err()?;
     let _ = app.emit("conversation-stopped", conversation_id);
+
+    let app_for_archive = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        app_for_archive.state::<ConversationAudioArchive>().finalize();
+    });
+
     Ok(())
 }
 

@@ -11,6 +11,8 @@
 - Choose whether suggestions appear automatically whenever the other side stops talking, or only on demand. Reuses your existing dictation hotkey — press it during a conversation to force a suggestion instead of starting dictation, since you're never doing both at once
 - Suggestions use their own model, independent of the Enhancement model — pick a different (or pricier) one without it affecting dictation, and it still works even with Enhancement turned off
 - Conversation history is kept indefinitely and viewable from Settings → Conversations; delete individual conversations from there
+- Settings → Statistics is now History & Analytics: your usage stats plus every dictation and conversation as a card (date, duration, type, a snippet), expandable to the full transcript, with Copy and Delete (which also removes the saved audio) on each one
+- Audio is now saved alongside every transcript by default — one file per dictation, one per side of a conversation — so you can revisit or copy from a session later, not just its text
 
 ### How it works
 
@@ -32,6 +34,8 @@
 - Adds a second dual-stream audio capture path (`audio/conversation.rs`) alongside the existing single-stream dictation recorder, sharing its resample/WAV-encode/silence-detection helpers
 - Adds a third app window (`conversation`) — resizable, always-on-top, decorations-off with a custom titlebar matching Settings — separate from the fixed 100×100 overlay and the main Settings window
 - `conversation-started`/`conversation-stopped` events broadcast to every window so state stays consistent regardless of which window started or stopped a conversation
+- Adds `audio_path` (transcriptions) and `audio_path_me`/`audio_path_them` (conversations) columns (migration v4); audio is written to `{app_data}/recordings/` in the background so saving a transcript never blocks on disk I/O
+- Conversation audio is streamed to its per-channel WAV file chunk-by-chunk as the call runs, rather than buffered in memory, and finalized (header patched) on stop or app exit
 
 ## [0.8.7] - 2026-08-15
 

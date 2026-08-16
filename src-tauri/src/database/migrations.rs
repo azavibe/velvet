@@ -83,6 +83,24 @@ pub fn run(conn: &Connection) -> Result<()> {
         conn.execute_batch("PRAGMA user_version = 3;")?;
     }
 
+    // v4: local audio persistence for the History & Analytics view.
+    // `transcriptions.audio_path` is nullable — set only once the
+    // background write finishes, so a just-saved row briefly has no
+    // audio_path yet. `conversations` gets one path per channel since
+    // they're captured (and archived) as two independent streams.
+    if version < 4 {
+        if !column_exists(conn, "transcriptions", "audio_path")? {
+            conn.execute("ALTER TABLE transcriptions ADD COLUMN audio_path TEXT", [])?;
+        }
+        if !column_exists(conn, "conversations", "audio_path_me")? {
+            conn.execute("ALTER TABLE conversations ADD COLUMN audio_path_me TEXT", [])?;
+        }
+        if !column_exists(conn, "conversations", "audio_path_them")? {
+            conn.execute("ALTER TABLE conversations ADD COLUMN audio_path_them TEXT", [])?;
+        }
+        conn.execute_batch("PRAGMA user_version = 4;")?;
+    }
+
     Ok(())
 }
 
@@ -147,13 +165,13 @@ mod tests {
     }
 
     #[test]
-    fn full_run_bumps_user_version_to_3() {
+    fn full_run_bumps_user_version_to_4() {
         let conn = Connection::open_in_memory().unwrap();
         run(&conn).unwrap();
         let v: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(v, 3);
+        assert_eq!(v, 4);
     }
 
     #[test]
@@ -185,7 +203,7 @@ mod tests {
         let v: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(v, 3);
+        assert_eq!(v, 4);
     }
 
     #[test]
@@ -228,6 +246,46 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         run(&conn).unwrap();
         // Second call would fail with "table already exists" if v3 weren't guarded.
+        run(&conn).unwrap();
+    }
+
+    #[test]
+    fn v4_adds_audio_path_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        run(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO transcriptions (original_text, audio_path) VALUES ('hi', '/tmp/a.wav')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO conversations (audio_path_me, audio_path_them) VALUES ('/tmp/me.wav', '/tmp/them.wav')",
+            [],
+        )
+        .unwrap();
+
+        let t_path: String = conn
+            .query_row("SELECT audio_path FROM transcriptions WHERE original_text = 'hi'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(t_path, "/tmp/a.wav");
+
+        let (me, them): (String, String) = conn
+            .query_row(
+                "SELECT audio_path_me, audio_path_them FROM conversations WHERE audio_path_me = '/tmp/me.wav'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(me, "/tmp/me.wav");
+        assert_eq!(them, "/tmp/them.wav");
+    }
+
+    #[test]
+    fn v4_is_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        run(&conn).unwrap();
+        // Second call would fail with "duplicate column name" if v4 weren't guarded.
         run(&conn).unwrap();
     }
 }

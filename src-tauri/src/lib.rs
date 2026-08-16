@@ -160,6 +160,10 @@ pub fn run() {
             // same as LiveSessionState below.
             app.manage(std::sync::Arc::new(audio::conversation::ConversationState::new()));
 
+            // History & Analytics: per-channel WAV writers for the
+            // currently-running conversation's audio archive.
+            app.manage(crate::commands::conversation::ConversationAudioArchive::default());
+
             // Initialize live dictation session state. Wrap in Arc so the
             // audio-pump task spawned in start_live_session can clone a handle
             // for self-cleanup on exit (preventing HashMap leaks when a WS
@@ -308,6 +312,9 @@ pub fn run() {
                     .inner()
                     .clone();
                 let _ = crate::audio::conversation::ConversationCapture::stop(&conv_state);
+                app_handle
+                    .state::<crate::commands::conversation::ConversationAudioArchive>()
+                    .finalize();
             }
         });
 }

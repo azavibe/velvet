@@ -203,6 +203,7 @@ export function useAudioRecording({ onToast }: UseAudioRecordingOptions = {}) {
         settings.agentName,
         null,
         durationMs,
+        audioData,
       );
 
       setPhase("idle");

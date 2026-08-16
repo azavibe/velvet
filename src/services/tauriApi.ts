@@ -120,6 +120,9 @@ export interface Transcription {
   processing_method: string;
   agent_name: string | null;
   error: string | null;
+  duration_ms: number | null;
+  word_count: number | null;
+  audio_path: string | null;
 }
 
 export async function saveTranscription(
@@ -129,6 +132,7 @@ export async function saveTranscription(
   agentName: string | null,
   error: string | null,
   durationMs: number | null,
+  audioData?: number[] | null,
 ): Promise<number> {
   return invoke("save_transcription", {
     originalText,
@@ -137,6 +141,7 @@ export async function saveTranscription(
     agentName,
     error,
     durationMs,
+    audioData: audioData ?? null,
   });
 }
 
@@ -418,6 +423,9 @@ export interface ConversationSummary {
   ended_at: string | null;
   title: string | null;
   persona_name: string | null;
+  audio_path_me: string | null;
+  audio_path_them: string | null;
+  snippet: string | null;
 }
 
 export interface ConversationDetail {
