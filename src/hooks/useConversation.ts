@@ -17,13 +17,21 @@ import type { Settings } from "@/hooks/useSettings";
 
 interface UseConversationOptions {
   settings: Settings;
-  /** Reasoning model/provider/key to generate suggestions with — reuses
-   *  whatever the user has configured for AI enhancement, since a
-   *  suggestion is just another reasoning call. */
+  /** Reasoning model/provider/key to generate suggestions with — independent
+   *  of AI enhancement's model, see conversationReasoningProvider/Model on
+   *  Settings. */
   reasoningModel: string;
   reasoningProvider: string;
   reasoningApiKey: string;
   groqApiKey: string;
+  /** Whether this instance should auto-fire a suggestion when the other
+   *  side finishes a turn (trigger mode "auto"). Exactly one mounted
+   *  instance per conversation should have this on — multiple auto-firing
+   *  instances would generate duplicate suggestions for the same turn.
+   *  The dedicated Conversation window is the auto-firing owner; any other
+   *  place that mounts this hook just to track status/expose the hotkey
+   *  should pass false. Defaults to true. */
+  autoTrigger?: boolean;
   onToast?: (props: { title?: string; description?: string }) => void;
 }
 
@@ -33,6 +41,7 @@ export function useConversation({
   reasoningProvider,
   reasoningApiKey,
   groqApiKey,
+  autoTrigger = true,
   onToast,
 }: UseConversationOptions) {
   const [conversationId, setConversationId] = useState<number | null>(null);
@@ -86,7 +95,7 @@ export function useConversation({
       // A finished "them" utterance IS a turn boundary — the backend's VAD
       // already segments on the other side's pause, so there's no separate
       // client-side turn-detection needed here.
-      if (payload.channel === "them" && triggerModeRef.current === "auto") {
+      if (autoTrigger && payload.channel === "them" && triggerModeRef.current === "auto") {
         forceSuggestion();
       }
     });

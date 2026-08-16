@@ -207,6 +207,14 @@ export async function showSettings(): Promise<void> {
   return invoke("show_settings");
 }
 
+export async function showConversationWindow(): Promise<void> {
+  return invoke("show_conversation_window");
+}
+
+export async function hideConversationWindow(): Promise<void> {
+  return invoke("hide_conversation_window");
+}
+
 // --- Settings convenience helpers ---
 
 // Agent name

@@ -313,6 +313,30 @@ impl Database {
         Ok(conn.last_insert_rowid())
     }
 
+    /// Utterances on `conversation_id` at or after `since_ms`, any channel,
+    /// oldest first. Used for echo detection — checking whether a
+    /// just-transcribed chunk on one channel is actually the other
+    /// channel's audio bleeding into the microphone (speaker playback,
+    /// not headphones).
+    pub fn get_recent_utterances(&self, conversation_id: i64, since_ms: i64) -> Result<Vec<ConversationUtterance>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, conversation_id, channel, started_at_ms, text
+             FROM conversation_utterances WHERE conversation_id = ?1 AND started_at_ms >= ?2
+             ORDER BY started_at_ms ASC",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![conversation_id, since_ms], |row| {
+            Ok(ConversationUtterance {
+                id: row.get(0)?,
+                conversation_id: row.get(1)?,
+                channel: row.get(2)?,
+                started_at_ms: row.get(3)?,
+                text: row.get(4)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     pub fn list_conversations(&self, limit: u32, offset: u32) -> Result<Vec<ConversationSummary>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -615,5 +639,19 @@ mod tests {
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].id, second);
         assert_eq!(list[1].id, first);
+    }
+
+    #[test]
+    fn get_recent_utterances_filters_by_time_and_includes_both_channels() {
+        let db = Database::new_in_memory().unwrap();
+        let id = db.create_conversation(None).unwrap();
+        db.insert_conversation_utterance(id, "me", 1000, "old one").unwrap();
+        db.insert_conversation_utterance(id, "them", 5000, "recent them").unwrap();
+        db.insert_conversation_utterance(id, "me", 5200, "recent me").unwrap();
+
+        let recent = db.get_recent_utterances(id, 4000).unwrap();
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].text, "recent them");
+        assert_eq!(recent[1].text, "recent me");
     }
 }

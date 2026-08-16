@@ -258,6 +258,8 @@ pub fn run() {
             commands::database::get_stats,
             commands::app::quit_app,
             commands::app::show_settings,
+            commands::app::show_conversation_window,
+            commands::app::hide_conversation_window,
             commands::changelog::read_changelog,
             commands::live::start_live_session,
             commands::live::stop_live_session,

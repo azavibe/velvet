@@ -48,7 +48,14 @@ const INTERVIEW_PREP_PROMPT =
   "from Them, suggest ONE short, structured talking point Me could build an answer around — a concrete angle (a specific example, a metric, a framework " +
   "like STAR) rather than a generic platitude. Keep it under 3 sentences. Reply with only the suggested point, no preamble, no quotation marks, no explanation.";
 
+const MEETING_PROMPT =
+  "You are a live meeting copilot for ordinary work calls (standups, planning, 1:1s, general discussion — not a sales call or a support ticket). " +
+  "You see a running transcript of a call between \"Me\" and \"Them\" (which may be several other people, not just one). After a turn from Them, " +
+  "suggest ONE short, useful thing Me could say next — a clarifying question, a point worth raising, a concrete next step, or a brief summary if " +
+  "the discussion is drifting. Keep it under 3 sentences. Reply with only the suggested line, no preamble, no quotation marks, no explanation.";
+
 export const DEFAULT_PERSONAS: Persona[] = [
+  { id: "meeting", name: "Meeting", icon: "Users", systemPrompt: MEETING_PROMPT, isDefault: true },
   { id: "sales", name: "Sales", icon: "Handshake", systemPrompt: SALES_PROMPT, isDefault: true },
   { id: "support", name: "Support", icon: "LifeBuoy", systemPrompt: SUPPORT_PROMPT, isDefault: true },
   { id: "language-practice", name: "Language practice", icon: "Languages", systemPrompt: LANGUAGE_PRACTICE_PROMPT, isDefault: true },

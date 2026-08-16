@@ -68,14 +68,20 @@ export interface Settings {
   personas: Persona[];
   activePersonaId: string;
   /** "auto" fires a suggestion whenever the other side stops talking;
-   *  "hotkey" only fires on demand. The hotkey itself is always live in
-   *  either mode. */
+   *  "hotkey" only fires on demand. Reuses the dictation hotkey — pressing
+   *  it during an active conversation triggers a suggestion instead of
+   *  starting dictation, since the two never happen at the same time. */
   conversationTriggerMode: "auto" | "hotkey";
-  conversationHotkey: string;
   /** Microphone device for conversation capture. Empty = system default.
    *  Kept separate from `selectedMicDeviceId` (dictation) since a call may
    *  reasonably use a different input than everyday dictation. */
   conversationMicDeviceId: string;
+  /** Reasoning model for conversation suggestions — deliberately independent
+   *  of `reasoningProvider`/`reasoningModel` (dictation's AI enhancement).
+   *  Turning enhancement off shouldn't take away the ability to pick a
+   *  (possibly pricier) model for live suggestions. */
+  conversationReasoningProvider: string;
+  conversationReasoningModel: string;
 
   // Developer
   debugMode: boolean;
@@ -121,8 +127,9 @@ const DEFAULTS: Settings = {
   personas: DEFAULT_PERSONAS,
   activePersonaId: DEFAULT_PERSONAS[0].id,
   conversationTriggerMode: "auto",
-  conversationHotkey: "",
   conversationMicDeviceId: "",
+  conversationReasoningProvider: "openai",
+  conversationReasoningModel: "gpt-5-mini",
   debugMode: false,
   uiLanguage: "",  // Empty string = auto-detect
   openaiApiKey: "",
@@ -143,7 +150,8 @@ const STORE_KEYS = [
   "useCustomPrompt", "customSystemPrompt",
   "autoPaste", "soundEnabled", "dictationKey", "activationMode",
   "selectedMicDeviceId", "debugMode", "uiLanguage",
-  "personas", "activePersonaId", "conversationTriggerMode", "conversationHotkey", "conversationMicDeviceId",
+  "personas", "activePersonaId", "conversationTriggerMode", "conversationMicDeviceId",
+  "conversationReasoningProvider", "conversationReasoningModel",
 ] as const satisfies readonly (keyof Settings)[];
 
 const API_PROVIDERS = ["openai", "anthropic", "gemini", "groq", "mistral", "qwen", "openrouter"] as const;
@@ -197,6 +205,19 @@ export function useSettings() {
       if (resolved.secondaryLanguage === "en") {
         resolved.secondaryLanguage = "en-US";
         setSetting("secondaryLanguage", "en-US");
+      }
+      // Migration: installs that already saved a personas list (from testing
+      // before "Meeting" existed) won't pick up new defaults automatically —
+      // only truly missing settings get backfilled. Add it once if absent.
+      if (
+        Array.isArray(resolved.personas) &&
+        !resolved.personas.some((p) => p.id === "meeting")
+      ) {
+        const meeting = DEFAULT_PERSONAS.find((p) => p.id === "meeting");
+        if (meeting) {
+          resolved.personas = [meeting, ...resolved.personas];
+          setSetting("personas", resolved.personas);
+        }
       }
 
       resolved.agentName = agentNameVal;

@@ -15,3 +15,24 @@ pub fn show_settings(app: tauri::AppHandle) -> Result<(), String> {
     window.set_focus().str_err()?;
     Ok(())
 }
+
+#[tauri::command]
+pub fn show_conversation_window(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    let window = app
+        .get_webview_window("conversation")
+        .ok_or("Conversation window not found")?;
+    window.show().str_err()?;
+    window.set_focus().str_err()?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn hide_conversation_window(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    let window = app
+        .get_webview_window("conversation")
+        .ok_or("Conversation window not found")?;
+    window.hide().str_err()?;
+    Ok(())
+}

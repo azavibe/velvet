@@ -34,6 +34,20 @@
         "decorations": false,
         "visible": false,
         "center": true
+      },
+      {
+        "label": "conversation",
+        "title": "Whisperi — Conversation",
+        "url": "/",
+        "width": 380,
+        "height": 560,
+        "minWidth": 300,
+        "minHeight": 360,
+        "resizable": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "visible": false,
+        "center": true
       }
     ],
     "security": {

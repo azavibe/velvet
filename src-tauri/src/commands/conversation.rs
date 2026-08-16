@@ -19,6 +19,45 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// Window to look back for a possible echo, and the word-overlap ratio
+/// above which a "me" utterance is treated as speaker output bleeding into
+/// the microphone rather than the user actually speaking.
+///
+/// Known limitation: this drops the *whole* matching "me" utterance, not
+/// just the echoed portion. If the leaked audio runs directly into the
+/// user's real reply with no pause between them (so the VAD accumulator
+/// buffers them as one chunk), that reply is lost along with the echo —
+/// trimming just the overlapping prefix would need word-level alignment
+/// between the two transcriptions, which this deliberately simple
+/// same-source-audio check doesn't attempt. Headphones avoid the whole
+/// class of problem; this only helps the on-speakers case.
+const ECHO_WINDOW_MS: i64 = 3000;
+const ECHO_OVERLAP_THRESHOLD: f64 = 0.5;
+
+fn normalized_words(text: &str) -> std::collections::HashSet<String> {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_string())
+        .collect()
+}
+
+/// Jaccard similarity (intersection / union) of the two texts' word sets.
+/// Cheap and dependency-free — exact wording rarely matches between two
+/// independent Whisper transcriptions of the *same* audio (different
+/// channel gain, VAD boundaries), so this is deliberately loose rather
+/// than requiring a near-exact match.
+fn word_overlap_ratio(a: &str, b: &str) -> f64 {
+    let wa = normalized_words(a);
+    let wb = normalized_words(b);
+    if wa.is_empty() || wb.is_empty() {
+        return 0.0;
+    }
+    let intersection = wa.intersection(&wb).count();
+    let union = wa.union(&wb).count();
+    intersection as f64 / union as f64
+}
+
 #[derive(Clone, serde::Serialize)]
 struct ConversationUtterancePayload {
     id: i64,
@@ -126,6 +165,28 @@ async fn handle_conversation_chunk(app: AppHandle, conversation_id: i64, chunk: 
     }
 
     let db = app.state::<Database>();
+
+    // Echo check, "me" side only: if the loopback ("them") channel said
+    // something near-identical in the last few seconds, this "me" chunk is
+    // almost certainly speaker output bleeding into the microphone, not
+    // the user actually speaking. Deliberately asymmetric — loopback is
+    // the authoritative capture of whatever's playing through the
+    // speakers, so a "them" chunk is never dropped just because the mic
+    // happened to pick up something similar; only the mic side can be the
+    // artifact here.
+    if channel_str == "me" {
+        if let Ok(recent) = db.get_recent_utterances(conversation_id, started_at_ms - ECHO_WINDOW_MS) {
+            let is_echo = recent
+                .iter()
+                .filter(|u| u.channel == "them")
+                .any(|u| word_overlap_ratio(&u.text, &text) >= ECHO_OVERLAP_THRESHOLD);
+            if is_echo {
+                log::info!("[Conversation] dropped likely-echo me chunk: {:?}", text);
+                return;
+            }
+        }
+    }
+
     let utterance_id = match db.insert_conversation_utterance(conversation_id, channel_str, started_at_ms, &text) {
         Ok(id) => id,
         Err(e) => {
@@ -264,4 +325,34 @@ pub async fn generate_suggestion(
     );
 
     Ok(response.text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn word_overlap_detects_near_identical_echo() {
+        let a = "Good luck getting that power before 2031, that's the situation that we have today.";
+        let b = "a request for all hundreds of megawatts of power to build the data center today, good luck getting that power before 2031, that's the situation that we have today.";
+        assert!(word_overlap_ratio(a, b) >= ECHO_OVERLAP_THRESHOLD);
+    }
+
+    #[test]
+    fn word_overlap_low_for_unrelated_text() {
+        let a = "can you tell me more about your data center clients";
+        let b = "no this is not true I am going to fix this and change it";
+        assert!(word_overlap_ratio(a, b) < ECHO_OVERLAP_THRESHOLD);
+    }
+
+    #[test]
+    fn word_overlap_empty_text_is_zero() {
+        assert_eq!(word_overlap_ratio("", "hello"), 0.0);
+        assert_eq!(word_overlap_ratio("hello", ""), 0.0);
+    }
+
+    #[test]
+    fn word_overlap_identical_text_is_one() {
+        assert_eq!(word_overlap_ratio("hello world", "Hello, World!"), 1.0);
+    }
 }

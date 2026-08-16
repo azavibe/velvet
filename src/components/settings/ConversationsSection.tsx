@@ -1,26 +1,26 @@
 import type { ComponentType } from "react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus, Trash2, Play, Square, Handshake, LifeBuoy, Languages, GraduationCap, User, Sparkles } from "lucide-react";
+import { Plus, Trash2, Handshake, LifeBuoy, Languages, GraduationCap, Users, User, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import StyledSelect from "@/components/ui/StyledSelect";
 import { SettingsSection, SettingsRow } from "@/components/ui/SettingsSection";
-import { HotkeyInput } from "@/components/ui/HotkeyInput";
-import { ConversationConsentModal } from "@/components/ui/ConversationConsentModal";
+import ProviderModelSelector from "./ProviderModelSelector";
+import { getReasoningProviders } from "./providerHelpers";
 import { createPersona, type Persona } from "@/models/persona";
 import {
   listAudioDevices,
   listConversations,
   deleteConversation,
+  showConversationWindow,
   type AudioDevice,
   type ConversationSummary,
 } from "@/services/tauriApi";
-import type { useConversation } from "@/hooks/useConversation";
 import type { SectionProps } from "./types";
 
 const PERSONA_ICONS: Record<string, ComponentType<{ className?: string }>> = {
-  Handshake, LifeBuoy, Languages, GraduationCap, User,
+  Handshake, LifeBuoy, Languages, GraduationCap, Users, User,
 };
 
 function PersonaIcon({ name, className }: { name: string; className?: string }) {
@@ -28,18 +28,10 @@ function PersonaIcon({ name, className }: { name: string; className?: string }) 
   return <Icon className={className} />;
 }
 
-interface ConversationsSectionProps extends SectionProps {
-  /** Owned by SettingsPanel (mounted for the app's whole lifetime, tab
-   *  switches included) so the conversation and its hotkey survive
-   *  navigating away from this tab or the window being hidden. */
-  conversation: ReturnType<typeof useConversation>;
-}
-
-export default function ConversationsSection({ settings, update, conversation }: ConversationsSectionProps) {
+export default function ConversationsSection({ settings, update }: SectionProps) {
   const { t } = useTranslation();
   const [devices, setDevices] = useState<AudioDevice[]>([]);
   const [history, setHistory] = useState<ConversationSummary[]>([]);
-  const [consentRequested, setConsentRequested] = useState(false);
   const [expandedPersonaId, setExpandedPersonaId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -51,16 +43,7 @@ export default function ConversationsSection({ settings, update, conversation }:
   };
   useEffect(() => {
     refreshHistory();
-  }, [conversation.isActive]);
-
-  const handleToggle = async () => {
-    if (conversation.isActive) {
-      await conversation.stop();
-      refreshHistory();
-      return;
-    }
-    setConsentRequested(true);
-  };
+  }, []);
 
   const updatePersona = (id: string, patch: Partial<Persona>) => {
     update("personas", settings.personas.map((p) => (p.id === id ? { ...p, ...patch } : p)));
@@ -82,14 +65,12 @@ export default function ConversationsSection({ settings, update, conversation }:
 
   return (
     <>
-      <ConversationConsentModal
-        requested={consentRequested}
-        onAccept={async () => {
-          setConsentRequested(false);
-          await conversation.start();
-        }}
-        onCancel={() => setConsentRequested(false)}
-      />
+      <SettingsSection title={t("conversation.live.title")} description={t("conversation.live.description")}>
+        <Button onClick={() => showConversationWindow()} variant="default" size="sm" className="gap-1.5">
+          <ExternalLink className="w-3.5 h-3.5" />
+          {t("conversation.live.openPanel")}
+        </Button>
+      </SettingsSection>
 
       <SettingsSection title={t("conversation.trigger.title")} description={t("conversation.trigger.description")}>
         <div className="space-y-3">
@@ -109,8 +90,21 @@ export default function ConversationsSection({ settings, update, conversation }:
             ))}
           </div>
           <p className="text-xs text-muted-foreground">{t("conversation.trigger.hotkeyAlwaysOn")}</p>
-          <HotkeyInput value={settings.conversationHotkey} onChange={(hk) => update("conversationHotkey", hk)} />
         </div>
+      </SettingsSection>
+
+      <SettingsSection title={t("conversation.model.title")} description={t("conversation.model.description")}>
+        <ProviderModelSelector
+          providers={getReasoningProviders(settings)}
+          selectedProvider={settings.conversationReasoningProvider}
+          selectedModel={settings.conversationReasoningModel}
+          registryKey="cloudProviders"
+          openRouterDefault="openai/gpt-4o"
+          onProviderChange={(id) => update("conversationReasoningProvider", id)}
+          onModelChange={(model) => update("conversationReasoningModel", model)}
+          settings={settings}
+          update={update}
+        />
       </SettingsSection>
 
       <SettingsSection title={t("conversation.mic.title")}>
@@ -193,54 +187,6 @@ export default function ConversationsSection({ settings, update, conversation }:
             <Plus className="w-3.5 h-3.5" />
             {t("conversation.personas.add")}
           </Button>
-        </div>
-      </SettingsSection>
-
-      <SettingsSection title={t("conversation.live.title")} description={t("conversation.live.description")}>
-        <div className="space-y-3">
-          <Button onClick={handleToggle} variant={conversation.isActive ? "destructive" : "default"} size="sm" className="gap-1.5">
-            {conversation.isActive ? <Square className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-            {conversation.isActive ? t("conversation.live.stop") : t("conversation.live.start")}
-          </Button>
-
-          {conversation.isActive && (
-            <>
-              <div className="rounded-control border border-border/70 bg-surface-1/50 p-3 max-h-56 overflow-y-auto space-y-1.5">
-                {conversation.transcript.length === 0 && (
-                  <p className="text-xs text-muted-foreground">{t("conversation.live.listening")}</p>
-                )}
-                {conversation.transcript.map((u) => (
-                  <div key={u.id} className="text-sm">
-                    <span className={u.channel === "me" ? "text-primary font-medium" : "text-accent font-medium"}>
-                      {u.channel === "me" ? t("conversation.live.me") : t("conversation.live.them")}:
-                    </span>{" "}
-                    <span className="text-foreground">{u.text}</span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Button
-                  onClick={conversation.forceSuggestion}
-                  disabled={conversation.isGenerating}
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  {conversation.isGenerating ? t("conversation.live.generating") : t("conversation.live.suggestNow")}
-                </Button>
-                <span className="text-xs text-muted-foreground">{t("conversation.live.personaHint", { name: conversation.activePersona?.name })}</span>
-              </div>
-
-              {conversation.suggestion && (
-                <div className="rounded-control border border-primary/30 bg-primary/5 p-3">
-                  <p className="text-[10px] uppercase tracking-wide text-primary/80 mb-1">{t("conversation.live.suggestion")}</p>
-                  <p className="text-sm text-foreground">{conversation.suggestion.text}</p>
-                </div>
-              )}
-            </>
-          )}
         </div>
       </SettingsSection>
 

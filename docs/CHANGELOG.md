@@ -6,22 +6,23 @@
 
 ### Highlights
 
-- New Conversations feature: a live copilot for calls, in Settings → Conversations. Start a conversation and it listens to both you and the other side, transcribes both separately in real time, and suggests what to say next — right there in that panel
-- Suggestions come from a persona — a short system prompt with a name. Four are included (Sales, Support, Language practice, Interview prep) and you can write your own
-- Choose whether suggestions appear automatically whenever the other side stops talking, or only when you press a hotkey — the hotkey always works either way, even while Settings is closed
+- New Conversations feature: a live copilot for calls, in its own resizable, always-on-top panel. Open it from the tray/overlay right-click menu or Settings → Conversations, pick a persona, hit Start — it listens to both you and the other side, transcribes both separately in real time, and suggests what to say next right there
+- Suggestions come from a persona — a short system prompt with a name. Five are included (Meeting, Sales, Support, Language practice, Interview prep) and you can write your own
+- Choose whether suggestions appear automatically whenever the other side stops talking, or only on demand. Reuses your existing dictation hotkey — press it during a conversation to force a suggestion instead of starting dictation, since you're never doing both at once
+- Suggestions use their own model, independent of the Enhancement model — pick a different (or pricier) one without it affecting dictation, and it still works even with Enhancement turned off
 - Conversation history is kept indefinitely and viewable from Settings → Conversations; delete individual conversations from there
 
 ### How it works
 
-- Runs entirely on Groq: `whisper-large-v3-turbo` for transcription, `llama-3.1-8b-instant` (or whichever Groq model you pick) for suggestions — one API key, no other provider required
+- Runs entirely on Groq: `whisper-large-v3-turbo` for transcription; suggestions use whatever provider/model you pick for them — one Groq key covers transcription, no other provider is required unless you want a different model for suggestions
 - The two sides are captured as genuinely separate audio channels — your microphone, and a system-audio loopback of whatever the call app plays through your speakers — rather than being split apart after the fact
 - Each channel is chunked on pauses in speech (not on a timer), so a finished chunk from the other side is itself the "their turn ended" signal used for automatic suggestions
-- Lives entirely in the Settings window (not the floating overlay) — the underlying conversation state survives switching Settings tabs or closing the Settings window, so the hotkey keeps working
+- If you're on speakers rather than headphones, a "me" chunk that closely matches what loopback just captured is treated as your mic picking up the call audio and dropped, instead of showing a duplicated line
 
 ### Known limitations
 
 - Windows only, and only for calls where the other person's audio comes through your speakers (Zoom/Teams/Meet-style). In-person multi-person meetings are not supported in this release
-- On speaker output (not headphones) your own microphone can re-capture the other side's audio, occasionally transcribing a line on both channels
+- The speaker-echo filter drops the whole matching utterance, not just the echoed part — if you start replying with no pause right after leaked audio, that reply can be dropped along with it. Headphones avoid this entirely
 - Translated strings for this feature are English-only in this release; the other 8 languages show English placeholders for these specific strings until localized
 - Recording another person is regulated in many places — a consent prompt appears before a conversation starts, but you're responsible for actually having that consent
 
@@ -29,6 +30,8 @@
 
 - Adds `conversations`, `conversation_utterances`, `conversation_suggestions` tables (migration v3)
 - Adds a second dual-stream audio capture path (`audio/conversation.rs`) alongside the existing single-stream dictation recorder, sharing its resample/WAV-encode/silence-detection helpers
+- Adds a third app window (`conversation`) — resizable, always-on-top, decorations-off with a custom titlebar matching Settings — separate from the fixed 100×100 overlay and the main Settings window
+- `conversation-started`/`conversation-stopped` events broadcast to every window so state stays consistent regardless of which window started or stopped a conversation
 
 ## [0.8.7] - 2026-08-15
 

@@ -17,8 +17,6 @@ import {
   X,
 } from "lucide-react";
 import { useSettings } from "@/hooks/useSettings";
-import { useHotkey } from "@/hooks/useHotkey";
-import { useConversation } from "@/hooks/useConversation";
 import { ToastProvider, useToast } from "@/components/ui/Toast";
 import { readChangelog, getSetting, setSetting } from "@/services/tauriApi";
 import WhatsNewModal from "@/components/ui/WhatsNewModal";
@@ -63,38 +61,6 @@ function SettingsPanelInner() {
   const { t } = useTranslation();
   const { settings, update, loaded } = useSettings();
   const { toast } = useToast();
-
-  // Owned here (not inside ConversationsSection) so the conversation and
-  // its hotkey survive navigating away from that tab — this window is
-  // created hidden at startup and never destroyed (see lib.rs), so its JS
-  // keeps running even while the window itself isn't visible.
-  const reasoningApiKey =
-    (settings[`${settings.reasoningProvider}ApiKey` as keyof typeof settings] as string) ?? "";
-  const conversation = useConversation({
-    settings,
-    reasoningModel: settings.reasoningModel,
-    reasoningProvider: settings.reasoningProvider,
-    reasoningApiKey,
-    groqApiKey: settings.groqApiKey,
-    onToast: (props) => toast({ ...props, variant: "destructive" }),
-  });
-
-  // Suspend the hotkey while any HotkeyInput (dictation's or this one) is
-  // actively capturing a new binding, so recording it doesn't also fire it.
-  const [hotkeyCapturing, setHotkeyCapturing] = useState(false);
-  useEffect(() => {
-    const unlisten = listen<{ capturing: boolean }>("hotkey-capturing", (event) => {
-      setHotkeyCapturing(event.payload.capturing);
-    });
-    return () => { unlisten.then((fn) => fn()); };
-  }, []);
-
-  useHotkey({
-    shortcut: settings.conversationHotkey,
-    activationMode: "tap",
-    onToggle: () => conversation.forceSuggestion(),
-    enabled: loaded && !!settings.conversationHotkey && !hotkeyCapturing && conversation.isActive,
-  });
 
   useEffect(() => {
     const unlisten = listen<{ version: string }>("update-available", () => {
@@ -228,7 +194,7 @@ function SettingsPanelInner() {
               <AgentSection settings={settings} update={update} />
             )}
             {section === "conversations" && (
-              <ConversationsSection settings={settings} update={update} toast={toast} conversation={conversation} />
+              <ConversationsSection settings={settings} update={update} toast={toast} />
             )}
             {section === "developer" && (
               <DeveloperSection settings={settings} update={update} toast={toast} />
