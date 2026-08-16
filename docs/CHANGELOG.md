@@ -13,6 +13,7 @@
 - Conversation history is kept indefinitely and viewable from Settings → Conversations; delete individual conversations from there
 - Settings → Statistics is now History & Analytics: your usage stats plus every dictation and conversation as a card (date, duration, type, a snippet), expandable to the full transcript, with Copy and Delete (which also removes the saved audio) on each one
 - Audio is now saved alongside every transcript by default — one file per dictation, one per side of a conversation — so you can revisit or copy from a session later, not just its text
+- New Notes: mic-only capture in the Conversation window — pick "Take Note" from its persona dropdown instead of a persona. Start, pause (mic stops being captured entirely, not just skipped by silence detection), resume, and keep talking across as many pauses as you like, all as one note. From History, run an opt-in AI Markdown cleanup pass on a note, edit its text inline, or resume capture into it later with "Append Dictation"
 
 ### How it works
 
@@ -42,6 +43,8 @@
 - `conversation-started`/`conversation-stopped` events broadcast to every window so state stays consistent regardless of which window started or stopped a conversation
 - Adds `audio_path` (transcriptions) and `audio_path_me`/`audio_path_them` (conversations) columns (migration v4); audio is written to `{app_data}/recordings/` in the background so saving a transcript never blocks on disk I/O
 - Conversation audio is streamed to its per-channel WAV file chunk-by-chunk as the call runs, rather than buffered in memory, and finalized (header patched) on stop or app exit
+- Adds a `notes` table (migration v5) and a separate mic-only capture path (`audio/note_capture.rs`) with an explicit pause flag checked in the audio callback — paused audio never reaches the VAD or gets transcribed, rather than relying on silence detection to skip it
+- "Append Dictation" resuming a previously-stopped note starts a new audio segment file rather than appending to the old one (hound can't append to an existing WAV without rewriting its header); `notes.audio_path` therefore points at only the most recent capture session — a known limitation, documented in `NoteAudioArchive`
 
 ## [0.8.7] - 2026-08-15
 

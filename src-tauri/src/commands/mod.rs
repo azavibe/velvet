@@ -5,6 +5,7 @@ pub mod clipboard;
 pub mod conversation;
 pub mod database;
 pub mod live;
+pub mod notes;
 pub mod reasoning;
 pub mod settings;
 pub mod transcription;
@@ -19,8 +20,8 @@ impl<T, E: std::fmt::Display> ResultExt<T> for Result<T, E> {
     }
 }
 
-/// `{app_data}/recordings/`, created on first use. Shared by dictation and
-/// conversation audio archiving (History & Analytics).
+/// `{app_data}/recordings/`, created on first use. Shared by dictation,
+/// conversation, and note audio archiving (History & Analytics).
 pub(crate) fn recordings_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     use tauri::Manager;
     let base = app.path().app_data_dir().str_err()?;

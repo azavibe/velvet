@@ -95,6 +95,23 @@ pub struct ConversationDetail {
     pub suggestions: Vec<ConversationSuggestion>,
 }
 
+/// A Note: mic-only capture with inline editing and an optional AI
+/// Markdown cleanup pass. `raw_transcript` is what capture produced and is
+/// never overwritten by cleanup; `body_markdown` is the opt-in cleaned-up
+/// version, `None` until the user runs cleanup. History cards show
+/// `body_markdown` when present, falling back to `raw_transcript`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Note {
+    pub id: i64,
+    pub created_at: String,
+    pub updated_at: String,
+    pub title: Option<String>,
+    pub raw_transcript: String,
+    pub body_markdown: Option<String>,
+    pub audio_path: Option<String>,
+    pub tags: Vec<String>,
+}
+
 /// Initialize the database and store it in Tauri's managed state
 pub fn init(app: &AppHandle) -> Result<()> {
     let db_path = get_db_path(app)?;
@@ -533,6 +550,123 @@ impl Database {
         }
         Ok(())
     }
+
+    // --- Notes ---
+
+    fn row_to_note(row: &rusqlite::Row) -> rusqlite::Result<Note> {
+        let tags_json: String = row.get(6)?;
+        let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+        Ok(Note {
+            id: row.get(0)?,
+            created_at: row.get(1)?,
+            updated_at: row.get(2)?,
+            title: row.get(3)?,
+            raw_transcript: row.get(4)?,
+            body_markdown: row.get(5)?,
+            tags,
+            audio_path: row.get(7)?,
+        })
+    }
+
+    const NOTE_COLUMNS: &'static str =
+        "id, created_at, updated_at, title, raw_transcript, body_markdown, tags, audio_path";
+
+    pub fn create_note(&self) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("INSERT INTO notes DEFAULT VALUES", [])?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Appends transcribed text to a note's running transcript — used both
+    /// for the live capture stream and for "Append Dictation" on an
+    /// existing note. Bumps `updated_at` so the note resurfaces at the top
+    /// of the newest-first history list.
+    pub fn append_note_transcript(&self, note_id: i64, text: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE notes SET
+                raw_transcript = CASE WHEN raw_transcript = '' THEN ?2 ELSE raw_transcript || ' ' || ?2 END,
+                updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?1",
+            rusqlite::params![note_id, text],
+        )?;
+        Ok(())
+    }
+
+    /// Inline edit: overwrites title/transcript with user-provided text.
+    /// `body_markdown` isn't touched here — editing the raw transcript
+    /// after a cleanup pass leaves the cleaned version as-is until the user
+    /// re-runs cleanup, rather than silently invalidating it.
+    pub fn update_note(&self, note_id: i64, title: Option<&str>, raw_transcript: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE notes SET title = ?2, raw_transcript = ?3, updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
+            rusqlite::params![note_id, title, raw_transcript],
+        )?;
+        Ok(())
+    }
+
+    /// Title-only update — used by the live capture window, which doesn't
+    /// have (and shouldn't need to reconstruct) the authoritative
+    /// server-side transcript text that `update_note` would otherwise
+    /// overwrite.
+    pub fn set_note_title(&self, note_id: i64, title: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE notes SET title = ?2, updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
+            rusqlite::params![note_id, title],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_note_markdown(&self, note_id: i64, body_markdown: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE notes SET body_markdown = ?2, updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
+            rusqlite::params![note_id, body_markdown],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_note_audio_path(&self, note_id: i64, audio_path: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE notes SET audio_path = ?2 WHERE id = ?1",
+            rusqlite::params![note_id, audio_path],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_notes(&self, limit: u32, offset: u32) -> Result<Vec<Note>> {
+        let conn = self.conn.lock().unwrap();
+        let sql = format!(
+            "SELECT {} FROM notes ORDER BY updated_at DESC LIMIT ?1 OFFSET ?2",
+            Self::NOTE_COLUMNS
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params![limit, offset], Self::row_to_note)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn get_note(&self, note_id: i64) -> Result<Note> {
+        let conn = self.conn.lock().unwrap();
+        let sql = format!("SELECT {} FROM notes WHERE id = ?1", Self::NOTE_COLUMNS);
+        conn.query_row(&sql, rusqlite::params![note_id], Self::row_to_note)
+            .map_err(Into::into)
+    }
+
+    /// Deletes the row and, best-effort, its archived audio file.
+    pub fn delete_note(&self, note_id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let audio_path: Option<String> = conn
+            .query_row("SELECT audio_path FROM notes WHERE id = ?1", [note_id], |r| r.get(0))
+            .ok();
+        conn.execute("DELETE FROM notes WHERE id = ?1", [note_id])?;
+        if let Some(path) = audio_path.filter(|p| !p.is_empty()) {
+            let _ = std::fs::remove_file(path);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -755,5 +889,76 @@ mod tests {
         assert_eq!(recent.len(), 2);
         assert_eq!(recent[0].text, "recent them");
         assert_eq!(recent[1].text, "recent me");
+    }
+
+    #[test]
+    fn create_note_starts_empty_with_default_fields() {
+        let db = Database::new_in_memory().unwrap();
+        let id = db.create_note().unwrap();
+        let note = db.get_note(id).unwrap();
+        assert_eq!(note.title, None);
+        assert_eq!(note.raw_transcript, "");
+        assert_eq!(note.body_markdown, None);
+        assert_eq!(note.audio_path, None);
+        assert!(note.tags.is_empty());
+    }
+
+    #[test]
+    fn append_note_transcript_joins_chunks_with_a_space() {
+        let db = Database::new_in_memory().unwrap();
+        let id = db.create_note().unwrap();
+        db.append_note_transcript(id, "hello").unwrap();
+        db.append_note_transcript(id, "world").unwrap();
+        let note = db.get_note(id).unwrap();
+        assert_eq!(note.raw_transcript, "hello world");
+    }
+
+    #[test]
+    fn update_note_overwrites_title_and_transcript_but_not_markdown() {
+        let db = Database::new_in_memory().unwrap();
+        let id = db.create_note().unwrap();
+        db.append_note_transcript(id, "raw text").unwrap();
+        db.set_note_markdown(id, "# Title\n\ncleaned up").unwrap();
+
+        db.update_note(id, Some("My title"), "edited raw text").unwrap();
+
+        let note = db.get_note(id).unwrap();
+        assert_eq!(note.title.as_deref(), Some("My title"));
+        assert_eq!(note.raw_transcript, "edited raw text");
+        assert_eq!(note.body_markdown.as_deref(), Some("# Title\n\ncleaned up"));
+    }
+
+    #[test]
+    fn set_note_title_does_not_touch_transcript() {
+        let db = Database::new_in_memory().unwrap();
+        let id = db.create_note().unwrap();
+        db.append_note_transcript(id, "keep me").unwrap();
+        db.set_note_title(id, "Renamed").unwrap();
+
+        let note = db.get_note(id).unwrap();
+        assert_eq!(note.title.as_deref(), Some("Renamed"));
+        assert_eq!(note.raw_transcript, "keep me");
+    }
+
+    #[test]
+    fn list_notes_orders_most_recently_updated_first() {
+        let db = Database::new_in_memory().unwrap();
+        let first = db.create_note().unwrap();
+        let second = db.create_note().unwrap();
+        // Touch the first note again so it should resurface at the top.
+        db.append_note_transcript(first, "later addition").unwrap();
+
+        let list = db.list_notes(10, 0).unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].id, first);
+        assert_eq!(list[1].id, second);
+    }
+
+    #[test]
+    fn delete_note_removes_the_row() {
+        let db = Database::new_in_memory().unwrap();
+        let id = db.create_note().unwrap();
+        db.delete_note(id).unwrap();
+        assert!(db.get_note(id).is_err());
     }
 }

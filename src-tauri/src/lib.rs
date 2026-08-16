@@ -164,6 +164,11 @@ pub fn run() {
             // currently-running conversation's audio archive.
             app.manage(crate::commands::conversation::ConversationAudioArchive::default());
 
+            // Notes feature: mic-only capture with pause/resume, mirroring
+            // ConversationState's Arc-wrapping for the same reason.
+            app.manage(std::sync::Arc::new(audio::note_capture::NoteCaptureState::new()));
+            app.manage(crate::commands::notes::NoteAudioArchive::default());
+
             // Initialize live dictation session state. Wrap in Arc so the
             // audio-pump task spawned in start_live_session can clone a handle
             // for self-cleanup on exit (preventing HashMap leaks when a WS
@@ -282,6 +287,19 @@ pub fn run() {
             commands::conversation::get_conversation,
             commands::conversation::delete_conversation,
             commands::conversation::generate_suggestion,
+            commands::notes::start_note_capture,
+            commands::notes::pause_note_capture,
+            commands::notes::resume_note_capture,
+            commands::notes::stop_note_capture,
+            commands::notes::is_note_capture_active,
+            commands::notes::is_note_capture_paused,
+            commands::notes::get_note_capture_error,
+            commands::notes::list_notes,
+            commands::notes::get_note,
+            commands::notes::set_note_title,
+            commands::notes::update_note,
+            commands::notes::delete_note,
+            commands::notes::cleanup_note,
         ])
         .build(tauri::generate_context!())
         .expect("error while building whisperi")
@@ -314,6 +332,16 @@ pub fn run() {
                 let _ = crate::audio::conversation::ConversationCapture::stop(&conv_state);
                 app_handle
                     .state::<crate::commands::conversation::ConversationAudioArchive>()
+                    .finalize();
+
+                // Same for an active note capture.
+                let note_state = app_handle
+                    .state::<std::sync::Arc<crate::audio::note_capture::NoteCaptureState>>()
+                    .inner()
+                    .clone();
+                let _ = crate::audio::note_capture::NoteCapture::stop(&note_state);
+                app_handle
+                    .state::<crate::commands::notes::NoteAudioArchive>()
                     .finalize();
             }
         });

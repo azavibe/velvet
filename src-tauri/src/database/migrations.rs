@@ -101,6 +101,28 @@ pub fn run(conn: &Connection) -> Result<()> {
         conn.execute_batch("PRAGMA user_version = 4;")?;
     }
 
+    // v5: Notes — mic-only, pause/resume capture with inline editing and an
+    // optional AI Markdown cleanup pass. `raw_transcript` is what capture
+    // actually produced and is never overwritten; `body_markdown` is the
+    // opt-in cleaned-up version, NULL until the user runs cleanup. `tags` is
+    // stored as a JSON array string (no relational tag table — there's no
+    // tag management UI yet to justify one).
+    if version < 5 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                title TEXT,
+                raw_transcript TEXT NOT NULL DEFAULT '',
+                body_markdown TEXT,
+                audio_path TEXT,
+                tags TEXT NOT NULL DEFAULT '[]'
+            );",
+        )?;
+        conn.execute_batch("PRAGMA user_version = 5;")?;
+    }
+
     Ok(())
 }
 
@@ -165,13 +187,13 @@ mod tests {
     }
 
     #[test]
-    fn full_run_bumps_user_version_to_4() {
+    fn full_run_bumps_user_version_to_5() {
         let conn = Connection::open_in_memory().unwrap();
         run(&conn).unwrap();
         let v: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(v, 4);
+        assert_eq!(v, 5);
     }
 
     #[test]
@@ -203,7 +225,7 @@ mod tests {
         let v: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(v, 4);
+        assert_eq!(v, 5);
     }
 
     #[test]
@@ -286,6 +308,38 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         run(&conn).unwrap();
         // Second call would fail with "duplicate column name" if v4 weren't guarded.
+        run(&conn).unwrap();
+    }
+
+    #[test]
+    fn v5_creates_notes_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        run(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO notes (title, raw_transcript) VALUES ('Grocery list', 'milk, eggs')",
+            [],
+        )
+        .unwrap();
+
+        let (title, transcript, body, tags): (String, String, Option<String>, String) = conn
+            .query_row(
+                "SELECT title, raw_transcript, body_markdown, tags FROM notes WHERE title = 'Grocery list'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(title, "Grocery list");
+        assert_eq!(transcript, "milk, eggs");
+        assert_eq!(body, None);
+        assert_eq!(tags, "[]");
+    }
+
+    #[test]
+    fn v5_is_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        run(&conn).unwrap();
+        // Second call would fail with "table already exists" if v5 weren't guarded.
         run(&conn).unwrap();
     }
 }

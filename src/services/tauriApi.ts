@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   normalizeDictionary,
   type DictionaryEntry,
@@ -525,4 +525,121 @@ export async function onConversationStopped(
   callback: (conversationId: number) => void,
 ): Promise<UnlistenFn> {
   return listen<number>("conversation-stopped", (e) => callback(e.payload));
+}
+
+// --- Notes (mic-only capture with pause/resume) ---
+
+export interface Note {
+  id: number;
+  created_at: string;
+  updated_at: string;
+  title: string | null;
+  raw_transcript: string;
+  body_markdown: string | null;
+  audio_path: string | null;
+  tags: string[];
+}
+
+export interface NoteUtteranceEvent {
+  note_id: number;
+  started_at_ms: number;
+  text: string;
+}
+
+export interface NoteErrorEvent {
+  note_id: number;
+  message: string;
+}
+
+/** `noteId: undefined` creates a new note; pass an existing id to append
+ *  ("Append Dictation" from a History card). Either way resolves to the
+ *  note id capture is targeting. */
+export async function startNoteCapture(
+  micDeviceId: string | undefined,
+  groqApiKey: string,
+  noteId?: number,
+): Promise<number> {
+  return invoke("start_note_capture", { micDeviceId, groqApiKey, noteId });
+}
+
+export async function pauseNoteCapture(): Promise<void> {
+  return invoke("pause_note_capture");
+}
+
+export async function resumeNoteCapture(): Promise<void> {
+  return invoke("resume_note_capture");
+}
+
+export async function stopNoteCapture(): Promise<void> {
+  return invoke("stop_note_capture");
+}
+
+export async function isNoteCaptureActive(): Promise<boolean> {
+  return invoke("is_note_capture_active");
+}
+
+export async function isNoteCapturePaused(): Promise<boolean> {
+  return invoke("is_note_capture_paused");
+}
+
+export async function getNoteCaptureError(): Promise<string | null> {
+  return invoke("get_note_capture_error");
+}
+
+export async function listNotes(limit: number, offset: number): Promise<Note[]> {
+  return invoke("list_notes", { limit, offset });
+}
+
+export async function getNote(noteId: number): Promise<Note> {
+  return invoke("get_note", { noteId });
+}
+
+export async function updateNote(noteId: number, title: string | null, rawTranscript: string): Promise<void> {
+  return invoke("update_note", { noteId, title, rawTranscript });
+}
+
+export async function setNoteTitle(noteId: number, title: string): Promise<void> {
+  return invoke("set_note_title", { noteId, title });
+}
+
+export async function deleteNote(noteId: number): Promise<void> {
+  return invoke("delete_note", { noteId });
+}
+
+export async function cleanupNote(
+  noteId: number,
+  model: string,
+  provider: string,
+  apiKey: string,
+): Promise<string> {
+  return invoke("cleanup_note", { noteId, model, provider, apiKey });
+}
+
+export async function onNoteStarted(callback: (noteId: number) => void): Promise<UnlistenFn> {
+  return listen<number>("note-started", (e) => callback(e.payload));
+}
+
+export async function onNoteStopped(callback: () => void): Promise<UnlistenFn> {
+  return listen<void>("note-stopped", () => callback());
+}
+
+export async function onNoteUtterance(callback: (payload: NoteUtteranceEvent) => void): Promise<UnlistenFn> {
+  return listen<NoteUtteranceEvent>("note-utterance", (e) => callback(e.payload));
+}
+
+export async function onNoteError(callback: (payload: NoteErrorEvent) => void): Promise<UnlistenFn> {
+  return listen<NoteErrorEvent>("note-error", (e) => callback(e.payload));
+}
+
+/** "Append Dictation" on a History card: the Settings window can't start
+ *  capture itself (that lives in the Conversation window), so it shows that
+ *  window and asks it to resume capture into this note via a plain
+ *  frontend-to-frontend event — no backend command needed since both sides
+ *  are already-permitted windows listening/emitting on the same channel. */
+export async function requestNoteAppend(noteId: number): Promise<void> {
+  await emit("note-append-requested", noteId);
+}
+
+export async function onNoteAppendRequested(callback: (noteId: number) => void): Promise<UnlistenFn> {
+  return listen<number>("note-append-requested", (e) => callback(e.payload));
 }
