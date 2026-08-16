@@ -14,6 +14,7 @@ import {
 } from "@/services/tauriApi";
 import type { EnhancementIntensity } from "@/config/prompts";
 import type { DictionaryEntry } from "@/models/dictionary";
+import { DEFAULT_PERSONAS, type Persona } from "@/models/persona";
 
 export interface Settings {
   // Transcription
@@ -63,6 +64,19 @@ export interface Settings {
   agentName: string;
   agentAliases: string[];
 
+  // Conversations (live call copilot)
+  personas: Persona[];
+  activePersonaId: string;
+  /** "auto" fires a suggestion whenever the other side stops talking;
+   *  "hotkey" only fires on demand. The hotkey itself is always live in
+   *  either mode. */
+  conversationTriggerMode: "auto" | "hotkey";
+  conversationHotkey: string;
+  /** Microphone device for conversation capture. Empty = system default.
+   *  Kept separate from `selectedMicDeviceId` (dictation) since a call may
+   *  reasonably use a different input than everyday dictation. */
+  conversationMicDeviceId: string;
+
   // Developer
   debugMode: boolean;
 
@@ -104,6 +118,11 @@ const DEFAULTS: Settings = {
   selectedMicDeviceId: "",
   agentName: "Whisperi",
   agentAliases: [],
+  personas: DEFAULT_PERSONAS,
+  activePersonaId: DEFAULT_PERSONAS[0].id,
+  conversationTriggerMode: "auto",
+  conversationHotkey: "",
+  conversationMicDeviceId: "",
   debugMode: false,
   uiLanguage: "",  // Empty string = auto-detect
   openaiApiKey: "",
@@ -124,6 +143,7 @@ const STORE_KEYS = [
   "useCustomPrompt", "customSystemPrompt",
   "autoPaste", "soundEnabled", "dictationKey", "activationMode",
   "selectedMicDeviceId", "debugMode", "uiLanguage",
+  "personas", "activePersonaId", "conversationTriggerMode", "conversationHotkey", "conversationMicDeviceId",
 ] as const satisfies readonly (keyof Settings)[];
 
 const API_PROVIDERS = ["openai", "anthropic", "gemini", "groq", "mistral", "qwen", "openrouter"] as const;

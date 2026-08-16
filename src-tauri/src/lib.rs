@@ -154,6 +154,12 @@ pub fn run() {
             // Initialize audio recording state
             app.manage(audio::RecordingState::new());
 
+            // Conversations feature: dual-channel (mic + loopback) capture
+            // state. Wrapped in Arc so the chunk-consumer task spawned in
+            // start_conversation can hold a handle across await points,
+            // same as LiveSessionState below.
+            app.manage(std::sync::Arc::new(audio::conversation::ConversationState::new()));
+
             // Initialize live dictation session state. Wrap in Arc so the
             // audio-pump task spawned in start_live_session can clone a handle
             // for self-cleanup on exit (preventing HashMap leaks when a WS
@@ -261,6 +267,14 @@ pub fn run() {
             commands::live::get_foreground_window,
             commands::live::get_foreground_window_class,
             commands::live::get_focus_target,
+            commands::conversation::start_conversation,
+            commands::conversation::stop_conversation,
+            commands::conversation::get_conversation_audio_levels,
+            commands::conversation::is_conversation_active,
+            commands::conversation::list_conversations,
+            commands::conversation::get_conversation,
+            commands::conversation::delete_conversation,
+            commands::conversation::generate_suggestion,
         ])
         .build(tauri::generate_context!())
         .expect("error while building whisperi")
@@ -281,6 +295,16 @@ pub fn run() {
                 tauri::async_runtime::block_on(
                     sessions.shutdown(std::time::Duration::from_millis(1500)),
                 );
+
+                // Best-effort: stop an active conversation capture too, so its
+                // mic/loopback threads exit cleanly instead of being torn down
+                // mid-stream by process exit. A no-op when no conversation is
+                // active (stop() then just returns AudioError::NotRecording).
+                let conv_state = app_handle
+                    .state::<std::sync::Arc<crate::audio::conversation::ConversationState>>()
+                    .inner()
+                    .clone();
+                let _ = crate::audio::conversation::ConversationCapture::stop(&conv_state);
             }
         });
 }

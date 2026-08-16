@@ -378,3 +378,110 @@ export async function onLiveSessionClosed(
 export async function onSettingsChanged(callback: () => void): Promise<UnlistenFn> {
   return listen("settings-changed", () => callback());
 }
+
+// --- Conversations (live call copilot) ---
+
+export type ConversationChannel = "me" | "them";
+
+export interface ConversationUtteranceEvent {
+  id: number;
+  conversation_id: number;
+  channel: ConversationChannel;
+  started_at_ms: number;
+  text: string;
+}
+
+export interface ConversationSuggestionEvent {
+  id: number;
+  conversation_id: number;
+  created_at_ms: number;
+  persona_name: string | null;
+  text: string;
+}
+
+export interface ConversationErrorEvent {
+  conversation_id: number;
+  message: string;
+}
+
+export interface ConversationSummary {
+  id: number;
+  started_at: string;
+  ended_at: string | null;
+  title: string | null;
+  persona_name: string | null;
+}
+
+export interface ConversationDetail {
+  conversation: ConversationSummary;
+  utterances: ConversationUtteranceEvent[];
+  suggestions: ConversationSuggestionEvent[];
+}
+
+export async function startConversation(
+  micDeviceId: string | undefined,
+  groqApiKey: string,
+  personaName: string | undefined,
+): Promise<number> {
+  return invoke("start_conversation", { micDeviceId, groqApiKey, personaName });
+}
+
+export async function stopConversation(conversationId: number, title?: string): Promise<void> {
+  return invoke("stop_conversation", { conversationId, title });
+}
+
+export async function getConversationAudioLevels(): Promise<[number, number]> {
+  return invoke("get_conversation_audio_levels");
+}
+
+export async function isConversationActive(): Promise<boolean> {
+  return invoke("is_conversation_active");
+}
+
+export async function listConversations(limit: number, offset: number): Promise<ConversationSummary[]> {
+  return invoke("list_conversations", { limit, offset });
+}
+
+export async function getConversation(conversationId: number): Promise<ConversationDetail> {
+  return invoke("get_conversation", { conversationId });
+}
+
+export async function deleteConversation(conversationId: number): Promise<void> {
+  return invoke("delete_conversation", { conversationId });
+}
+
+export async function generateSuggestion(
+  conversationId: number,
+  personaSystemPrompt: string,
+  personaName: string | undefined,
+  model: string,
+  provider: string,
+  apiKey: string,
+): Promise<string> {
+  return invoke("generate_suggestion", {
+    conversationId,
+    personaSystemPrompt,
+    personaName,
+    model,
+    provider,
+    apiKey,
+  });
+}
+
+export async function onConversationUtterance(
+  callback: (payload: ConversationUtteranceEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<ConversationUtteranceEvent>("conversation-utterance", (e) => callback(e.payload));
+}
+
+export async function onConversationSuggestion(
+  callback: (payload: ConversationSuggestionEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<ConversationSuggestionEvent>("conversation-suggestion", (e) => callback(e.payload));
+}
+
+export async function onConversationError(
+  callback: (payload: ConversationErrorEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<ConversationErrorEvent>("conversation-error", (e) => callback(e.payload));
+}

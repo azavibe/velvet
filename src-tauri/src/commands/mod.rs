@@ -2,6 +2,7 @@ pub mod app;
 pub mod audio;
 pub mod changelog;
 pub mod clipboard;
+pub mod conversation;
 pub mod database;
 pub mod live;
 pub mod reasoning;

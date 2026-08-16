@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+## [0.8.8] - 2026-08-16
+
+### Highlights
+
+- New Conversations feature: a live copilot for calls. Start a conversation and it listens to both you and the other side, transcribes both separately in real time, and suggests what to say next
+- Suggestions come from a persona — a short system prompt with a name. Four are included (Sales, Support, Language practice, Interview prep) and you can write your own
+- Choose whether suggestions appear automatically whenever the other side stops talking, or only when you press a hotkey — the hotkey always works either way
+- The floating overlay expands into a compact transcript + suggestion panel for the length of a conversation, then collapses back down when it ends
+- Conversation history is kept indefinitely and viewable from Settings → Conversations; delete individual conversations from there
+
+### How it works
+
+- Runs entirely on Groq: `whisper-large-v3-turbo` for transcription, `llama-3.1-8b-instant` (or whichever Groq model you pick) for suggestions — one API key, no other provider required
+- The two sides are captured as genuinely separate audio channels — your microphone, and a system-audio loopback of whatever the call app plays through your speakers — rather than being split apart after the fact
+- Each channel is chunked on pauses in speech (not on a timer), so a finished chunk from the other side is itself the "their turn ended" signal used for automatic suggestions
+
+### Known limitations
+
+- Windows only, and only for calls where the other person's audio comes through your speakers (Zoom/Teams/Meet-style). In-person multi-person meetings are not supported in this release
+- On speaker output (not headphones) your own microphone can re-capture the other side's audio, occasionally transcribing a line on both channels
+- Translated strings for this feature are English-only in this release; the other 8 languages show English placeholders for these specific strings until localized
+- Recording another person is regulated in many places — a consent prompt appears before a conversation starts, but you're responsible for actually having that consent
+
+### Internal
+
+- Adds `conversations`, `conversation_utterances`, `conversation_suggestions` tables (migration v3)
+- Adds a second dual-stream audio capture path (`audio/conversation.rs`) alongside the existing single-stream dictation recorder, sharing its resample/WAV-encode/silence-detection helpers
+
 ## [0.8.7] - 2026-08-15
 
 ### Highlights

@@ -41,11 +41,54 @@ pub struct StatsPayload {
     pub avg_words: f64,
 }
 
+/// Summary row for the Conversations history list — no utterances/suggestions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationSummary {
+    pub id: i64,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    pub title: Option<String>,
+    pub persona_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationUtterance {
+    pub id: i64,
+    pub conversation_id: i64,
+    /// "me" (microphone) or "them" (system-audio loopback).
+    pub channel: String,
+    pub started_at_ms: i64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationSuggestion {
+    pub id: i64,
+    pub conversation_id: i64,
+    pub created_at_ms: i64,
+    pub persona_name: Option<String>,
+    pub text: String,
+}
+
+/// Full detail view for one conversation: the parent row plus its
+/// utterances and suggestions, each already ordered for display.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationDetail {
+    pub conversation: ConversationSummary,
+    pub utterances: Vec<ConversationUtterance>,
+    pub suggestions: Vec<ConversationSuggestion>,
+}
+
 /// Initialize the database and store it in Tauri's managed state
 pub fn init(app: &AppHandle) -> Result<()> {
     let db_path = get_db_path(app)?;
     let conn = Connection::open(&db_path)
         .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
+
+    // Required for `ON DELETE CASCADE` on conversation_utterances/conversation_suggestions
+    // (v3 migration) to actually cascade — SQLite ignores FK constraints unless this
+    // pragma is set per-connection.
+    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
 
     migrations::run(&conn)?;
 
@@ -70,6 +113,7 @@ impl Database {
     #[cfg(test)]
     fn new_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         migrations::run(&conn)?;
         Ok(Database {
             conn: Mutex::new(conn),
@@ -215,6 +259,153 @@ impl Database {
             avg_seconds,
             avg_words,
         })
+    }
+
+    // --- Conversations ---
+
+    pub fn create_conversation(&self, persona_name: Option<&str>) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO conversations (persona_name) VALUES (?1)",
+            rusqlite::params![persona_name],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn end_conversation(&self, conversation_id: i64, title: Option<&str>) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE conversations SET ended_at = CURRENT_TIMESTAMP, title = COALESCE(?2, title) WHERE id = ?1",
+            rusqlite::params![conversation_id, title],
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_conversation_utterance(
+        &self,
+        conversation_id: i64,
+        channel: &str,
+        started_at_ms: i64,
+        text: &str,
+    ) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO conversation_utterances (conversation_id, channel, started_at_ms, text)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![conversation_id, channel, started_at_ms, text],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn insert_conversation_suggestion(
+        &self,
+        conversation_id: i64,
+        created_at_ms: i64,
+        persona_name: Option<&str>,
+        text: &str,
+    ) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO conversation_suggestions (conversation_id, created_at_ms, persona_name, text)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![conversation_id, created_at_ms, persona_name, text],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn list_conversations(&self, limit: u32, offset: u32) -> Result<Vec<ConversationSummary>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, started_at, ended_at, title, persona_name
+             FROM conversations ORDER BY id DESC LIMIT ?1 OFFSET ?2",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![limit, offset], |row| {
+            Ok(ConversationSummary {
+                id: row.get(0)?,
+                started_at: row.get(1)?,
+                ended_at: row.get(2)?,
+                title: row.get(3)?,
+                persona_name: row.get(4)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn get_conversation(&self, conversation_id: i64) -> Result<ConversationDetail> {
+        let conn = self.conn.lock().unwrap();
+
+        let conversation = conn.query_row(
+            "SELECT id, started_at, ended_at, title, persona_name FROM conversations WHERE id = ?1",
+            rusqlite::params![conversation_id],
+            |row| {
+                Ok(ConversationSummary {
+                    id: row.get(0)?,
+                    started_at: row.get(1)?,
+                    ended_at: row.get(2)?,
+                    title: row.get(3)?,
+                    persona_name: row.get(4)?,
+                })
+            },
+        )?;
+
+        let utterances = {
+            let mut stmt = conn.prepare(
+                "SELECT id, conversation_id, channel, started_at_ms, text
+                 FROM conversation_utterances WHERE conversation_id = ?1 ORDER BY started_at_ms ASC, id ASC",
+            )?;
+            let rows = stmt.query_map(rusqlite::params![conversation_id], |row| {
+                Ok(ConversationUtterance {
+                    id: row.get(0)?,
+                    conversation_id: row.get(1)?,
+                    channel: row.get(2)?,
+                    started_at_ms: row.get(3)?,
+                    text: row.get(4)?,
+                })
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+
+        let suggestions = {
+            let mut stmt = conn.prepare(
+                "SELECT id, conversation_id, created_at_ms, persona_name, text
+                 FROM conversation_suggestions WHERE conversation_id = ?1 ORDER BY created_at_ms ASC, id ASC",
+            )?;
+            let rows = stmt.query_map(rusqlite::params![conversation_id], |row| {
+                Ok(ConversationSuggestion {
+                    id: row.get(0)?,
+                    conversation_id: row.get(1)?,
+                    created_at_ms: row.get(2)?,
+                    persona_name: row.get(3)?,
+                    text: row.get(4)?,
+                })
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+
+        Ok(ConversationDetail {
+            conversation,
+            utterances,
+            suggestions,
+        })
+    }
+
+    pub fn delete_conversation(&self, conversation_id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        // Explicit cascade, not just relying on the FK pragma: belt-and-braces
+        // in case a future connection opens without `PRAGMA foreign_keys = ON`.
+        conn.execute(
+            "DELETE FROM conversation_suggestions WHERE conversation_id = ?1",
+            rusqlite::params![conversation_id],
+        )?;
+        conn.execute(
+            "DELETE FROM conversation_utterances WHERE conversation_id = ?1",
+            rusqlite::params![conversation_id],
+        )?;
+        conn.execute(
+            "DELETE FROM conversations WHERE id = ?1",
+            rusqlite::params![conversation_id],
+        )?;
+        Ok(())
     }
 }
 
@@ -362,5 +553,67 @@ mod tests {
         assert_eq!(week.total_recordings, 1);
         assert_eq!(week.total_seconds, 2);
         assert_eq!(week.total_words, 4);
+    }
+
+    #[test]
+    fn conversation_round_trip_orders_by_started_at_ms() {
+        let db = Database::new_in_memory().unwrap();
+        let id = db.create_conversation(Some("Sales")).unwrap();
+
+        // Insert out of wall-clock order to prove the query sorts by
+        // started_at_ms, not insertion order — the two capture channels
+        // finish transcribing independently and can arrive in either order.
+        db.insert_conversation_utterance(id, "them", 2000, "so what's your budget")
+            .unwrap();
+        db.insert_conversation_utterance(id, "me", 1000, "hi thanks for taking the call")
+            .unwrap();
+        db.insert_conversation_suggestion(id, 2500, Some("Sales"), "mention the annual discount")
+            .unwrap();
+
+        db.end_conversation(id, Some("Discovery call")).unwrap();
+
+        let detail = db.get_conversation(id).unwrap();
+        assert_eq!(detail.conversation.title.as_deref(), Some("Discovery call"));
+        assert!(detail.conversation.ended_at.is_some());
+        assert_eq!(detail.utterances.len(), 2);
+        assert_eq!(detail.utterances[0].channel, "me");
+        assert_eq!(detail.utterances[1].channel, "them");
+        assert_eq!(detail.suggestions.len(), 1);
+    }
+
+    #[test]
+    fn delete_conversation_cascades_utterances_and_suggestions() {
+        let db = Database::new_in_memory().unwrap();
+        let id = db.create_conversation(None).unwrap();
+        db.insert_conversation_utterance(id, "me", 0, "hello").unwrap();
+        db.insert_conversation_suggestion(id, 0, None, "say hi back").unwrap();
+
+        db.delete_conversation(id).unwrap();
+
+        let conn = db.conn.lock().unwrap();
+        let conversations: i64 = conn
+            .query_row("SELECT COUNT(*) FROM conversations", [], |r| r.get(0))
+            .unwrap();
+        let utterances: i64 = conn
+            .query_row("SELECT COUNT(*) FROM conversation_utterances", [], |r| r.get(0))
+            .unwrap();
+        let suggestions: i64 = conn
+            .query_row("SELECT COUNT(*) FROM conversation_suggestions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(conversations, 0);
+        assert_eq!(utterances, 0);
+        assert_eq!(suggestions, 0);
+    }
+
+    #[test]
+    fn list_conversations_orders_newest_first() {
+        let db = Database::new_in_memory().unwrap();
+        let first = db.create_conversation(None).unwrap();
+        let second = db.create_conversation(None).unwrap();
+
+        let list = db.list_conversations(10, 0).unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].id, second);
+        assert_eq!(list[1].id, first);
     }
 }

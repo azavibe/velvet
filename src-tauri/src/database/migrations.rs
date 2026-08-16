@@ -44,6 +44,45 @@ pub fn run(conn: &Connection) -> Result<()> {
         conn.execute_batch("PRAGMA user_version = 2;")?;
     }
 
+    // v3: Conversations feature — live call capture (mic + system-audio
+    // loopback), the merged two-channel transcript, and the suggestions
+    // generated from it. `conversations` is the parent row for a single
+    // call; `conversation_utterances` holds one row per transcribed VAD
+    // chunk on either channel, ordered for display by `started_at_ms`
+    // (wall-clock, not per-channel sequence — the two channels transcribe
+    // independently and can complete out of order); `conversation_suggestions`
+    // records what the assistant proposed and when.
+    if version < 3 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                ended_at DATETIME,
+                title TEXT,
+                persona_name TEXT
+            );
+            CREATE TABLE IF NOT EXISTS conversation_utterances (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                channel TEXT NOT NULL,
+                started_at_ms INTEGER NOT NULL,
+                text TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_conversation_utterances_conv
+                ON conversation_utterances(conversation_id, started_at_ms);
+            CREATE TABLE IF NOT EXISTS conversation_suggestions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                created_at_ms INTEGER NOT NULL,
+                persona_name TEXT,
+                text TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_conversation_suggestions_conv
+                ON conversation_suggestions(conversation_id, created_at_ms);",
+        )?;
+        conn.execute_batch("PRAGMA user_version = 3;")?;
+    }
+
     Ok(())
 }
 
@@ -108,13 +147,13 @@ mod tests {
     }
 
     #[test]
-    fn v2_bumps_user_version_to_2() {
+    fn full_run_bumps_user_version_to_3() {
         let conn = Connection::open_in_memory().unwrap();
         run(&conn).unwrap();
         let v: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(v, 2);
+        assert_eq!(v, 3);
     }
 
     #[test]
@@ -146,6 +185,49 @@ mod tests {
         let v: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(v, 2);
+        assert_eq!(v, 3);
+    }
+
+    #[test]
+    fn v3_creates_conversation_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        run(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO conversations (title, persona_name) VALUES ('Standup', 'Sales')",
+            [],
+        )
+        .unwrap();
+        let conversation_id = conn.last_insert_rowid();
+
+        conn.execute(
+            "INSERT INTO conversation_utterances (conversation_id, channel, started_at_ms, text)
+             VALUES (?1, 'me', 1000, 'hello')",
+            rusqlite::params![conversation_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO conversation_suggestions (conversation_id, created_at_ms, persona_name, text)
+             VALUES (?1, 2000, 'Sales', 'try mentioning the discount')",
+            rusqlite::params![conversation_id],
+        )
+        .unwrap();
+
+        let utterance_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM conversation_utterances WHERE conversation_id = ?1",
+                rusqlite::params![conversation_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(utterance_count, 1);
+    }
+
+    #[test]
+    fn v3_is_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        run(&conn).unwrap();
+        // Second call would fail with "table already exists" if v3 weren't guarded.
+        run(&conn).unwrap();
     }
 }
