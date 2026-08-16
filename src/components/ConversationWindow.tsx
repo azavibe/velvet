@@ -27,6 +27,11 @@ function ConversationWindowInner() {
   // that once they've got it positioned where they want it.
   const [pinned, setPinned] = useState(true);
 
+  const onCaptureToast = useCallback(
+    (props: { title?: string; description?: string }) => toast({ ...props, variant: "destructive" }),
+    [toast],
+  );
+
   const conversation = useConversation({
     settings,
     reasoningModel: settings.conversationReasoningModel,
@@ -35,13 +40,13 @@ function ConversationWindowInner() {
       (settings[`${settings.conversationReasoningProvider}ApiKey` as keyof typeof settings] as string) ?? "",
     groqApiKey: settings.groqApiKey,
     autoTrigger: true,
-    onToast: (props) => toast({ ...props, variant: "destructive" }),
+    onToast: onCaptureToast,
   });
 
   const note = useNoteCapture({
     groqApiKey: settings.groqApiKey,
     micDeviceId: settings.conversationMicDeviceId,
-    onToast: (props) => toast({ ...props, variant: "destructive" }),
+    onToast: onCaptureToast,
   });
 
   // Reset the title field whenever a fresh note starts (an "Append

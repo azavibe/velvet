@@ -32,6 +32,7 @@
 ### Fixes
 
 - The Conversation window's capability wasn't registered for that window, so it silently had no permission to drag-move, minimize, close, or receive any live event — it could only resize, and would sit on "Listening…" forever even though transcription was running, because the events carrying transcript/suggestions/errors never reached it. The window can now be moved, minimized, and closed normally, and transcript/suggestions arrive live
+- Fixed transcription and notes appearing to stop after the first sentence or two even while still talking: the live-event listeners were re-registered on every incoming utterance (because the toast callback passed in had a new identity each render), and an event landing during that async re-registration gap was silently dropped. Listener wiring is now stable across renders regardless of what the caller passes for `onToast`
 - Added a pin toggle to the Conversation window's titlebar to drop always-on-top once it's positioned where you want it, without closing it
 
 ### Internal

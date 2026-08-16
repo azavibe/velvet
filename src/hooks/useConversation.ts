@@ -62,13 +62,25 @@ export function useConversation({
   const triggerModeRef = useRef(settings.conversationTriggerMode);
   triggerModeRef.current = settings.conversationTriggerMode;
 
+  // Callers (ConversationWindow) pass an inline `onToast` that gets a new
+  // identity every render. Reading it through a ref — instead of putting it
+  // in dependency arrays — keeps `forceSuggestion` and the listener-wiring
+  // effect below stable across renders. Without this, every incoming
+  // utterance triggers a state update → re-render → new `onToast` →
+  // dependent effect tears down and re-registers its `listen()` calls,
+  // which are async round-trips to the backend; an event landing in that
+  // gap is silently dropped. That's the mechanism behind "the first couple
+  // of sentences transcribed, then nothing" — not a capture bug.
+  const onToastRef = useRef(onToast);
+  onToastRef.current = onToast;
+
   const forceSuggestion = useCallback(async () => {
     const id = conversationIdRef.current;
     const persona = activePersonaRef.current;
     if (id == null || !persona) return;
     const { reasoningModel: model, reasoningProvider: provider, reasoningApiKey: apiKey } = reasoningRef.current;
     if (!apiKey) {
-      onToast?.({ description: "No reasoning API key configured for suggestions." });
+      onToastRef.current?.({ description: "No reasoning API key configured for suggestions." });
       return;
     }
     setIsGenerating(true);
@@ -77,11 +89,11 @@ export function useConversation({
       // The suggestion itself arrives via the conversation-suggestion event,
       // not the return value — this just kicks it off.
     } catch (e) {
-      onToast?.({ description: e instanceof Error ? e.message : String(e) });
+      onToastRef.current?.({ description: e instanceof Error ? e.message : String(e) });
     } finally {
       setIsGenerating(false);
     }
-  }, [onToast]);
+  }, []);
 
   // Live event wiring — utterances, suggestions, errors.
   useEffect(() => {
@@ -105,7 +117,7 @@ export function useConversation({
     });
     const unlistenError = onConversationError((payload) => {
       if (payload.conversation_id !== conversationIdRef.current) return;
-      onToast?.({ description: payload.message });
+      onToastRef.current?.({ description: payload.message });
     });
     // Broadcast regardless of which window issued the command — lets any
     // window's UI (and its hotkey registration) pick up a conversation
@@ -128,11 +140,11 @@ export function useConversation({
       unlistenStarted.then((fn) => fn());
       unlistenStopped.then((fn) => fn());
     };
-  }, [forceSuggestion, onToast]);
+  }, [forceSuggestion]);
 
   const start = useCallback(async () => {
     if (!groqApiKey) {
-      onToast?.({ description: "Conversations need a Groq API key (used for both transcription and, optionally, suggestions)." });
+      onToastRef.current?.({ description: "Conversations need a Groq API key (used for both transcription and, optionally, suggestions)." });
       return;
     }
     setTranscript([]);
@@ -151,13 +163,13 @@ export function useConversation({
     setTimeout(() => {
       getConversationError()
         .then((err) => {
-          if (err) onToast?.({ description: err });
+          if (err) onToastRef.current?.({ description: err });
         })
         .catch(() => {});
     }, 750);
 
     return id;
-  }, [groqApiKey, settings.conversationMicDeviceId, onToast]);
+  }, [groqApiKey, settings.conversationMicDeviceId]);
 
   const stop = useCallback(async (title?: string) => {
     const id = conversationIdRef.current;

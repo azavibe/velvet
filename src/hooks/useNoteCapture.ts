@@ -29,6 +29,15 @@ export function useNoteCapture({ groqApiKey, micDeviceId, onToast }: UseNoteCapt
   const noteIdRef = useRef<number | null>(null);
   noteIdRef.current = noteId;
 
+  // See useConversation.ts's identical onToastRef for why: an inline
+  // `onToast` gets a new identity every render, and every incoming
+  // utterance causes a re-render — if that identity were a dependency of
+  // the listener-wiring effect below, each utterance would tear down and
+  // re-register the `listen()` calls, and an event landing in that async
+  // gap would be silently dropped.
+  const onToastRef = useRef(onToast);
+  onToastRef.current = onToast;
+
   useEffect(() => {
     const unlistenUtterance = onNoteUtterance((payload) => {
       if (payload.note_id !== noteIdRef.current) return;
@@ -36,7 +45,7 @@ export function useNoteCapture({ groqApiKey, micDeviceId, onToast }: UseNoteCapt
     });
     const unlistenError = onNoteError((payload) => {
       if (payload.note_id !== noteIdRef.current) return;
-      onToast?.({ description: payload.message });
+      onToastRef.current?.({ description: payload.message });
     });
     const unlistenStarted = onNoteStarted((id) => {
       if (noteIdRef.current != null) return;
@@ -55,12 +64,12 @@ export function useNoteCapture({ groqApiKey, micDeviceId, onToast }: UseNoteCapt
       unlistenStarted.then((fn) => fn());
       unlistenStopped.then((fn) => fn());
     };
-  }, [onToast]);
+  }, []);
 
   const start = useCallback(
     async (existingNoteId?: number) => {
       if (!groqApiKey) {
-        onToast?.({ description: "Notes need a Groq API key (used for transcription)." });
+        onToastRef.current?.({ description: "Notes need a Groq API key (used for transcription)." });
         return;
       }
       setUtterances([]);
@@ -74,14 +83,14 @@ export function useNoteCapture({ groqApiKey, micDeviceId, onToast }: UseNoteCapt
       setTimeout(() => {
         getNoteCaptureError()
           .then((err) => {
-            if (err) onToast?.({ description: err });
+            if (err) onToastRef.current?.({ description: err });
           })
           .catch(() => {});
       }, 750);
 
       return id;
     },
-    [groqApiKey, micDeviceId, onToast],
+    [groqApiKey, micDeviceId],
   );
 
   const pause = useCallback(async () => {
