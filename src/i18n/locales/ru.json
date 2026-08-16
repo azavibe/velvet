@@ -1,5 +1,5 @@
 {
-  "settings.title": "Настройки Whisperi",
+  "settings.title": "Настройки Aral",
   "settings.loading": "Загрузка настроек...",
 
   "nav.general": "Общие",
@@ -46,7 +46,7 @@
   "general.mic.default": "(По умолчанию)",
   "general.behavior.title": "Поведение",
   "general.behavior.launchStartup": "Запускать при старте системы",
-  "general.behavior.launchStartupDesc": "Запускать Whisperi при входе в Windows",
+  "general.behavior.launchStartupDesc": "Запускать Aral при входе в Windows",
   "general.behavior.autoPaste": "Автоматически вставлять в буфер обмена",
   "general.behavior.autoPasteDesc": "Копировать транскрибированный текст в буфер обмена и вставлять в активное окно",
   "general.behavior.soundEffects": "Звуковые эффекты",
@@ -116,7 +116,7 @@
 
   "agent.name.title": "Имя агента",
   "agent.name.description": "Когда вы произносите это имя во время диктовки, ИИ переключается из режима очистки транскрипции в режим диалога — он отвечает на вопросы и следует инструкциям.",
-  "agent.name.placeholder": "Whisperi",
+  "agent.name.placeholder": "Aral",
   "agent.aliases.title": "Псевдонимы (необязательно)",
   "agent.aliases.description": "Альтернативные написания или транслитерации имени агента. Полезно, когда распознавание речи неправильно определяет неанглийские имена. До 2 псевдонимов.",
   "agent.aliases.placeholder1": "напр. Виспери",
@@ -132,7 +132,7 @@
   "developer.data.historyCleared": "История очищена",
   "developer.data.clearFailed": "Не удалось очистить историю",
 
-  "about.title": "Whisperi",
+  "about.title": "Aral",
   "about.description": "Диктовка на рабочем столе с облачной и локальной транскрипцией. Создано с помощью Tauri и React.",
   "about.updates.title": "Обновления",
   "about.updates.description": "Проверить наличие новых версий",
@@ -165,7 +165,7 @@
   "overlay.menu.settings": "Настройки",
   "overlay.menu.cancel": "Отменить запись",
   "overlay.menu.quit": "Выход",
-  "overlay.notification.title": "Whisperi",
+  "overlay.notification.title": "Aral",
   "overlay.live.connecting": "Подключение…",
   "overlay.live.streaming": "Слушаю…",
   "overlay.live.polishing": "Улучшение…",
@@ -219,7 +219,7 @@
   "micWarning": {
     "noDevice": {
       "title": "Микрофон не обнаружен",
-      "body": "Whisperi не удалось найти микрофон, поэтому запись не может начаться. Подключите микрофон и убедитесь, что он включён в системных настройках звука, затем повторите попытку."
+      "body": "Aral не удалось найти микрофон, поэтому запись не может начаться. Подключите микрофон и убедитесь, что он включён в системных настройках звука, затем повторите попытку."
     },
     "selectedMissing": {
       "title": "Микрофон недоступен",
@@ -257,5 +257,7 @@
   "history.loading": "Loading…",
   "history.emptyTranscript": "(no transcript)",
   "history.speakerMe": "Me",
-  "history.speakerThem": "Them"
+  "history.speakerThem": "Them",
+  "conversation.live.pin": "Keep on top",
+  "conversation.live.unpin": "Stop keeping on top"
 }

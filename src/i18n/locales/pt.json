@@ -1,5 +1,5 @@
 {
-  "settings.title": "Configurações do Whisperi",
+  "settings.title": "Configurações do Aral",
   "settings.loading": "Carregando configurações...",
 
   "nav.general": "Geral",
@@ -44,7 +44,7 @@
   "general.mic.default": "(Padrão)",
   "general.behavior.title": "Comportamento",
   "general.behavior.launchStartup": "Iniciar com o sistema",
-  "general.behavior.launchStartupDesc": "Iniciar o Whisperi ao fazer login no Windows",
+  "general.behavior.launchStartupDesc": "Iniciar o Aral ao fazer login no Windows",
   "general.behavior.autoPaste": "Colar automaticamente na área de transferência",
   "general.behavior.autoPasteDesc": "Copiar o texto transcrito para a área de transferência e colar na janela ativa",
   "general.behavior.soundEffects": "Efeitos sonoros",
@@ -114,7 +114,7 @@
 
   "agent.name.title": "Nome do agente",
   "agent.name.description": "Ao dizer este nome durante o ditado, a IA muda do modo de limpeza de transcrição para o modo de conversa — ela responde perguntas e segue instruções.",
-  "agent.name.placeholder": "Whisperi",
+  "agent.name.placeholder": "Aral",
   "agent.aliases.title": "Apelidos (opcional)",
   "agent.aliases.description": "Grafias alternativas ou transliterações do nome do agente. Útil quando o reconhecimento de voz não reconhece nomes em outros idiomas. Até 2 apelidos.",
   "agent.aliases.placeholder1": "ex. Wisperi",
@@ -130,7 +130,7 @@
   "developer.data.historyCleared": "Histórico limpo",
   "developer.data.clearFailed": "Falha ao limpar o histórico",
 
-  "about.title": "Whisperi",
+  "about.title": "Aral",
   "about.description": "Ditado de desktop com transcrição na nuvem e local. Construído com Tauri e React.",
   "about.updates.title": "Atualizações",
   "about.updates.description": "Verificar novas versões",
@@ -163,7 +163,7 @@
   "overlay.menu.settings": "Configurações",
   "overlay.menu.cancel": "Cancelar gravação",
   "overlay.menu.quit": "Sair",
-  "overlay.notification.title": "Whisperi",
+  "overlay.notification.title": "Aral",
   "overlay.live.connecting": "Conectando…",
   "overlay.live.streaming": "Ouvindo…",
   "overlay.live.polishing": "Aprimorando…",
@@ -217,7 +217,7 @@
   "micWarning": {
     "noDevice": {
       "title": "Nenhum microfone detectado",
-      "body": "O Whisperi não encontrou um microfone, então a gravação não pode começar. Conecte um microfone e verifique se ele está ativado nas configurações de som do sistema, depois tente novamente."
+      "body": "O Aral não encontrou um microfone, então a gravação não pode começar. Conecte um microfone e verifique se ele está ativado nas configurações de som do sistema, depois tente novamente."
     },
     "selectedMissing": {
       "title": "Microfone indisponível",
@@ -255,5 +255,7 @@
   "history.loading": "Loading…",
   "history.emptyTranscript": "(no transcript)",
   "history.speakerMe": "Me",
-  "history.speakerThem": "Them"
+  "history.speakerThem": "Them",
+  "conversation.live.pin": "Keep on top",
+  "conversation.live.unpin": "Stop keeping on top"
 }

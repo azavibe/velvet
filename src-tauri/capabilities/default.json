@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicegui-org/nicegui-tauri-demo/main/src-tauri/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default permissions for Whisperi",
-  "windows": ["main", "settings"],
+  "description": "Default permissions for Aral",
+  "windows": ["main", "settings", "conversation"],
   "permissions": [
     "core:default",
     "core:window:default",

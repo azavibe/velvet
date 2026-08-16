@@ -28,8 +28,14 @@
 - Translated strings for this feature are English-only in this release; the other 8 languages show English placeholders for these specific strings until localized
 - Recording another person is regulated in many places — a consent prompt appears before a conversation starts, but you're responsible for actually having that consent
 
+### Fixes
+
+- The Conversation window's capability wasn't registered for that window, so it silently had no permission to drag-move, minimize, close, or receive any live event — it could only resize, and would sit on "Listening…" forever even though transcription was running, because the events carrying transcript/suggestions/errors never reached it. The window can now be moved, minimized, and closed normally, and transcript/suggestions arrive live
+- Added a pin toggle to the Conversation window's titlebar to drop always-on-top once it's positioned where you want it, without closing it
+
 ### Internal
 
+- Renamed the app from Whisperi to Aral throughout: window titles, installer/product name, Settings title, About, tray tooltip, and the default agent name for new installs
 - Adds `conversations`, `conversation_utterances`, `conversation_suggestions` tables (migration v3)
 - Adds a second dual-stream audio capture path (`audio/conversation.rs`) alongside the existing single-stream dictation recorder, sharing its resample/WAV-encode/silence-detection helpers
 - Adds a third app window (`conversation`) — resizable, always-on-top, decorations-off with a custom titlebar matching Settings — separate from the fixed 100×100 overlay and the main Settings window

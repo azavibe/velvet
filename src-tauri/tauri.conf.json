@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicegui-org/nicegui-tauri-demo/main/src-tauri/schemas/desktop-schema.json",
-  "productName": "Whisperi",
+  "productName": "Aral",
   "version": "0.8.8",
   "identifier": "com.whisperi.app",
   "build": {
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Whisperi",
+        "title": "Aral",
         "width": 100,
         "height": 100,
         "resizable": false,
@@ -26,7 +26,7 @@
       },
       {
         "label": "settings",
-        "title": "Whisperi Settings",
+        "title": "Aral Settings",
         "url": "/",
         "width": 760,
         "height": 800,
@@ -37,7 +37,7 @@
       },
       {
         "label": "conversation",
-        "title": "Whisperi — Conversation",
+        "title": "Aral — Conversation",
         "url": "/",
         "width": 380,
         "height": 560,

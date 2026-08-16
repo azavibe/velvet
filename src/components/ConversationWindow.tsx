@@ -1,7 +1,7 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { Play, Square, Sparkles, X, Minus } from "lucide-react";
+import { Play, Square, Sparkles, X, Minus, Pin, PinOff } from "lucide-react";
 import { useSettings } from "@/hooks/useSettings";
 import { useConversation } from "@/hooks/useConversation";
 import { ConversationConsentModal } from "@/components/ui/ConversationConsentModal";
@@ -13,6 +13,10 @@ function ConversationWindowInner() {
   const { settings, update, loaded } = useSettings();
   const { toast } = useToast();
   const [consentRequested, setConsentRequested] = useState(false);
+  // The window starts alwaysOnTop (tauri.conf.json) so it doesn't get lost
+  // behind a call app the moment it opens — this just lets the user drop
+  // that once they've got it positioned where they want it.
+  const [pinned, setPinned] = useState(true);
 
   const conversation = useConversation({
     settings,
@@ -30,6 +34,22 @@ function ConversationWindowInner() {
   }, []);
   const handleMinimize = useCallback(() => {
     getCurrentWebviewWindow().minimize();
+  }, []);
+  const handleTogglePin = useCallback(() => {
+    setPinned((prev) => {
+      const next = !prev;
+      getCurrentWebviewWindow().setAlwaysOnTop(next);
+      return next;
+    });
+  }, []);
+
+  // Reflect the window's actual alwaysOnTop state on mount, in case it
+  // differs from our default assumption (e.g. a future config change).
+  useEffect(() => {
+    getCurrentWebviewWindow()
+      .isAlwaysOnTop()
+      .then(setPinned)
+      .catch(() => {});
   }, []);
 
   const handleToggle = () => {
@@ -62,6 +82,15 @@ function ConversationWindowInner() {
           {conversation.activePersona?.name ?? t("overlay.conversation.title")}
         </span>
         <div className="flex items-center gap-1">
+          <button
+            onClick={handleTogglePin}
+            title={pinned ? t("conversation.live.unpin") : t("conversation.live.pin")}
+            className={`w-6 h-6 flex items-center justify-center rounded-inner transition-colors ${
+              pinned ? "text-primary hover:bg-primary/10" : "text-muted-foreground hover:bg-surface-raised"
+            }`}
+          >
+            {pinned ? <Pin className="w-3 h-3" /> : <PinOff className="w-3 h-3" />}
+          </button>
           <button onClick={handleMinimize} className="w-6 h-6 flex items-center justify-center rounded-inner hover:bg-surface-raised transition-colors">
             <Minus className="w-3 h-3 text-muted-foreground" />
           </button>

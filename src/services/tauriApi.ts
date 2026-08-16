@@ -223,7 +223,7 @@ export async function hideConversationWindow(): Promise<void> {
 // --- Settings convenience helpers ---
 
 // Agent name
-const DEFAULT_AGENT_NAME = "Whisperi";
+const DEFAULT_AGENT_NAME = "Aral";
 
 export async function getAgentName(): Promise<string> {
   const name = await getSetting<string>("agentName");

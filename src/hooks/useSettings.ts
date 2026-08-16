@@ -122,7 +122,7 @@ const DEFAULTS: Settings = {
   liveEnhancement: true,
   liveLastError: "",
   selectedMicDeviceId: "",
-  agentName: "Whisperi",
+  agentName: "Aral",
   agentAliases: [],
   personas: DEFAULT_PERSONAS,
   activePersonaId: DEFAULT_PERSONAS[0].id,

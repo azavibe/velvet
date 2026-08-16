@@ -1,5 +1,5 @@
 {
-  "settings.title": "Paramètres Whisperi",
+  "settings.title": "Paramètres Aral",
   "settings.loading": "Chargement des paramètres...",
 
   "nav.general": "Général",
@@ -44,7 +44,7 @@
   "general.mic.default": "(Par défaut)",
   "general.behavior.title": "Comportement",
   "general.behavior.launchStartup": "Lancer au démarrage",
-  "general.behavior.launchStartupDesc": "Démarrer Whisperi lors de la connexion à Windows",
+  "general.behavior.launchStartupDesc": "Démarrer Aral lors de la connexion à Windows",
   "general.behavior.autoPaste": "Coller automatiquement dans le presse-papiers",
   "general.behavior.autoPasteDesc": "Copier le texte transcrit dans le presse-papiers et le coller dans la fenêtre active",
   "general.behavior.soundEffects": "Effets sonores",
@@ -114,7 +114,7 @@
 
   "agent.name.title": "Nom de l'agent",
   "agent.name.description": "Lorsque vous prononcez ce nom pendant la dictée, l'IA passe du mode nettoyage de transcription au mode conversation — elle répond aux questions et suit les instructions.",
-  "agent.name.placeholder": "Whisperi",
+  "agent.name.placeholder": "Aral",
   "agent.aliases.title": "Alias (optionnel)",
   "agent.aliases.description": "Orthographes alternatives ou translittérations du nom de l'agent. Utile lorsque la reconnaissance vocale ne reconnaît pas les noms non anglais. Jusqu'à 2 alias.",
   "agent.aliases.placeholder1": "ex. Wisperi",
@@ -130,7 +130,7 @@
   "developer.data.historyCleared": "Historique effacé",
   "developer.data.clearFailed": "Échec de l'effacement de l'historique",
 
-  "about.title": "Whisperi",
+  "about.title": "Aral",
   "about.description": "Dictée de bureau avec transcription cloud et locale. Construit avec Tauri et React.",
   "about.updates.title": "Mises à jour",
   "about.updates.description": "Vérifier les nouvelles versions",
@@ -163,7 +163,7 @@
   "overlay.menu.settings": "Paramètres",
   "overlay.menu.cancel": "Annuler l'enregistrement",
   "overlay.menu.quit": "Quitter",
-  "overlay.notification.title": "Whisperi",
+  "overlay.notification.title": "Aral",
   "overlay.live.connecting": "Connexion…",
   "overlay.live.streaming": "En écoute…",
   "overlay.live.polishing": "Amélioration…",
@@ -230,7 +230,7 @@
   "micWarning": {
     "noDevice": {
       "title": "Aucun microphone détecté",
-      "body": "Whisperi n'a trouvé aucun microphone, l'enregistrement ne peut donc pas démarrer. Connectez un microphone et assurez-vous qu'il est activé dans les paramètres de son de votre système, puis réessayez."
+      "body": "Aral n'a trouvé aucun microphone, l'enregistrement ne peut donc pas démarrer. Connectez un microphone et assurez-vous qu'il est activé dans les paramètres de son de votre système, puis réessayez."
     },
     "selectedMissing": {
       "title": "Microphone indisponible",
@@ -255,5 +255,7 @@
   "history.loading": "Loading…",
   "history.emptyTranscript": "(no transcript)",
   "history.speakerMe": "Me",
-  "history.speakerThem": "Them"
+  "history.speakerThem": "Them",
+  "conversation.live.pin": "Keep on top",
+  "conversation.live.unpin": "Stop keeping on top"
 }
