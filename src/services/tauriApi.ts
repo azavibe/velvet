@@ -438,6 +438,10 @@ export async function isConversationActive(): Promise<boolean> {
   return invoke("is_conversation_active");
 }
 
+export async function getConversationError(): Promise<string | null> {
+  return invoke("get_conversation_error");
+}
+
 export async function listConversations(limit: number, offset: number): Promise<ConversationSummary[]> {
   return invoke("list_conversations", { limit, offset });
 }

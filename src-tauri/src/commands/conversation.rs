@@ -160,6 +160,14 @@ pub fn is_conversation_active(conv_state: State<'_, Arc<ConversationState>>) -> 
     Ok(conv_state.is_active())
 }
 
+/// Surfaces a capture-thread setup/stream error (e.g. no loopback-capable
+/// output device) so the frontend can show it instead of silently sitting
+/// on an empty transcript.
+#[tauri::command]
+pub fn get_conversation_error(conv_state: State<'_, Arc<ConversationState>>) -> Result<Option<String>, String> {
+    Ok(conv_state.get_error())
+}
+
 #[tauri::command]
 pub fn list_conversations(db: State<'_, Database>, limit: u32, offset: u32) -> Result<Vec<ConversationSummary>, String> {
     db.list_conversations(limit, offset).str_err()

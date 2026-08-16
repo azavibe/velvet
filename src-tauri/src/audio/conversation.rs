@@ -89,6 +89,13 @@ fn now_ms() -> i64 {
 struct VadAccumulator {
     sample_rate: u32,
     buf: Vec<f32>,
+    /// Samples classified as speech, tracked separately from `buf.len()`
+    /// because `buf` also carries the trailing hangover silence (kept so a
+    /// mid-sentence pause isn't chopped out of the encoded audio). Gating
+    /// MIN_CHUNK_MS on `buf`'s total length would be a no-op: any
+    /// hangover-triggered finalize already has >= SILENCE_HANGOVER_MS of
+    /// trailing silence in `buf`, which alone exceeds MIN_CHUNK_MS.
+    speech_samples: usize,
     silence_run_samples: usize,
     started_at_ms: Option<i64>,
 }
@@ -98,9 +105,14 @@ impl VadAccumulator {
         Self {
             sample_rate,
             buf: Vec::new(),
+            speech_samples: 0,
             silence_run_samples: 0,
             started_at_ms: None,
         }
+    }
+
+    fn speech_duration_ms(&self) -> u64 {
+        (self.speech_samples as u64 * 1000) / self.sample_rate.max(1) as u64
     }
 
     fn duration_ms(&self) -> u64 {
@@ -122,11 +134,13 @@ impl VadAccumulator {
                 self.started_at_ms = Some(now_ms());
             }
             self.buf.extend_from_slice(frame);
+            self.speech_samples += frame.len();
             self.silence_run_samples = 0;
         } else if !self.buf.is_empty() {
             // Keep buffering silence inside an utterance (a mid-sentence
             // pause shouldn't chop it in half) but count it toward the
-            // hangover that eventually ends the utterance.
+            // hangover that eventually ends the utterance. Does NOT count
+            // toward speech_samples — see the field doc above.
             self.buf.extend_from_slice(frame);
             self.silence_run_samples += frame.len();
         } else {
@@ -142,16 +156,19 @@ impl VadAccumulator {
 
     /// Force-finalize whatever is buffered — used internally on
     /// hangover/max-duration, and externally to flush on stop. Returns
-    /// `None` for an empty or too-short buffer.
+    /// `None` for an empty buffer, or one with too little actual speech in
+    /// it (a stray noise blip followed by silence, not a real utterance).
     fn finalize(&mut self) -> Option<(i64, Vec<f32>)> {
-        if self.buf.is_empty() || self.duration_ms() < MIN_CHUNK_MS {
+        if self.buf.is_empty() || self.speech_duration_ms() < MIN_CHUNK_MS {
             self.buf.clear();
+            self.speech_samples = 0;
             self.silence_run_samples = 0;
             self.started_at_ms = None;
             return None;
         }
         let started_at_ms = self.started_at_ms.take().unwrap_or_else(now_ms);
         let samples = std::mem::take(&mut self.buf);
+        self.speech_samples = 0;
         self.silence_run_samples = 0;
         Some((started_at_ms, samples))
     }
@@ -563,9 +580,11 @@ mod tests {
     #[test]
     fn vad_finalizes_on_max_duration_even_without_silence() {
         let mut acc = VadAccumulator::new(16_000);
-        // Push continuous speech well past MAX_CHUNK_MS.
+        // Each iteration pushes 160 samples = 10ms at 16kHz; MAX_CHUNK_MS is
+        // 20_000ms, so this needs ~2000 iterations to reach it — push a
+        // comfortable margin past that.
         let mut result = None;
-        for _ in 0..300 {
+        for _ in 0..2200 {
             if let Some(r) = acc.push(&sine(160, 0.5)) {
                 result = Some(r);
                 break;

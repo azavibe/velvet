@@ -271,6 +271,7 @@ pub fn run() {
             commands::conversation::stop_conversation,
             commands::conversation::get_conversation_audio_levels,
             commands::conversation::is_conversation_active,
+            commands::conversation::get_conversation_error,
             commands::conversation::list_conversations,
             commands::conversation::get_conversation,
             commands::conversation::delete_conversation,

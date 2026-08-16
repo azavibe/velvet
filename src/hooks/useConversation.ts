@@ -3,6 +3,7 @@ import {
   startConversation,
   stopConversation,
   generateSuggestion,
+  getConversationError,
   onConversationUtterance,
   onConversationSuggestion,
   onConversationError,
@@ -116,6 +117,19 @@ export function useConversation({
       activePersonaRef.current?.name,
     );
     setConversationId(id);
+
+    // Capture threads build their cpal stream asynchronously after start()
+    // returns, so a setup failure (e.g. no loopback-capable output device)
+    // only shows up in state a moment later — check once rather than
+    // leaving the user staring at a transcript that will never fill in.
+    setTimeout(() => {
+      getConversationError()
+        .then((err) => {
+          if (err) onToast?.({ description: err });
+        })
+        .catch(() => {});
+    }, 750);
+
     return id;
   }, [groqApiKey, settings.conversationMicDeviceId, onToast]);
 
