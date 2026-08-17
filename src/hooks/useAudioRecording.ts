@@ -37,9 +37,14 @@ interface UseAudioRecordingOptions {
     description: string;
     variant: "default" | "destructive" | "success";
   }) => void;
+  /** Given the transcribed text, run it as an app command if it is one.
+   *  Returning true means it was handled as a command, so the text is an
+   *  instruction rather than dictation and must not be enhanced, pasted, or
+   *  saved to history. See config/voiceCommands.ts. */
+  onVoiceCommand?: (text: string) => Promise<boolean>;
 }
 
-export function useAudioRecording({ onToast }: UseAudioRecordingOptions = {}) {
+export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecordingOptions = {}) {
   const [phase, setPhase] = useState<RecordingPhase>("idle");
   const [audioLevel, setAudioLevel] = useState(0);
   const [transcript, setTranscript] = useState("");
@@ -49,6 +54,10 @@ export function useAudioRecording({ onToast }: UseAudioRecordingOptions = {}) {
   // stale under two rapid hotkey-release events (React commits state async),
   // which let one recording transcribe and paste twice.
   const stopInFlightRef = useRef(false);
+  // Read through a ref so `stop`'s identity doesn't change with the caller's
+  // callback identity (same reasoning as useConversation's onToastRef).
+  const onVoiceCommandRef = useRef(onVoiceCommand);
+  onVoiceCommandRef.current = onVoiceCommand;
 
   // Subscribe to audio-level and recording-error events
   useEffect(() => {
@@ -163,6 +172,21 @@ export function useAudioRecording({ onToast }: UseAudioRecordingOptions = {}) {
         providerText,
         settings.dictionary,
       );
+
+      // "Aral, start notes" is an instruction to the app, not text to type.
+      // Checked against the dictionary-corrected text because the agent name
+      // is itself a dictionary term, so this is where a misheard name is
+      // already fixed up. Bails before enhancement, paste, and history —
+      // a command isn't dictation.
+      if (onVoiceCommandRef.current) {
+        const handled = await onVoiceCommandRef.current(correctedText);
+        if (handled) {
+          console.log("[Aral] Handled as voice command:", correctedText);
+          setPhase("idle");
+          return;
+        }
+      }
+
       let finalText = correctedText;
       let rawAiResponse: string | null = null;
       try {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Play, Square, Pause, Sparkles, X, Minus, Pin, PinOff, Copy } from "lucide-react";
@@ -7,7 +7,14 @@ import { useConversation } from "@/hooks/useConversation";
 import { useNoteCapture } from "@/hooks/useNoteCapture";
 import { ConversationConsentModal } from "@/components/ui/ConversationConsentModal";
 import { ToastProvider, useToast } from "@/components/ui/Toast";
-import { setClipboardText, setNoteTitle as saveNoteTitle, onNoteAppendRequested } from "@/services/tauriApi";
+import {
+  setClipboardText,
+  setNoteTitle as saveNoteTitle,
+  onNoteAppendRequested,
+  onNoteStartRequested,
+  onConversationStartRequested,
+  onCaptureStopRequested,
+} from "@/services/tauriApi";
 import StyledSelect from "@/components/ui/StyledSelect";
 
 /** Synthetic persona-dropdown entry — not a real Persona, never persisted.
@@ -49,6 +56,13 @@ function ConversationWindowInner() {
     onToast: onCaptureToast,
   });
 
+  // Read the live capture handles from the one-shot listener effects below
+  // without making them depend on (and re-register on) every render.
+  const captureRef = useRef({ note, conversation });
+  captureRef.current = { note, conversation };
+  const updateRef = useRef(update);
+  updateRef.current = update;
+
   // Reset the title field whenever a fresh note starts (an "Append
   // Dictation" resume would ideally show the existing title, but that's a
   // History-card entry point outside this window for now).
@@ -56,17 +70,48 @@ function ConversationWindowInner() {
     if (!note.isActive) setNoteTitle("");
   }, [note.isActive]);
 
-  // "Append Dictation" from a History card (Settings window) asks this
-  // window to switch into note mode and resume capture into that note.
+  // Whichever kind of capture is running decides which layout is showing —
+  // covers capture started from anywhere else (a voice command, an "Append
+  // Dictation" from History) landing on a window still showing the other mode.
   useEffect(() => {
-    const unlisten = onNoteAppendRequested((noteId) => {
+    if (note.isActive) setMode("note");
+  }, [note.isActive]);
+  useEffect(() => {
+    if (conversation.isActive) setMode("conversation");
+  }, [conversation.isActive]);
+
+  // Intents from other windows: "Append Dictation" on a History card, and
+  // the overlay's voice commands. Starting a conversation deliberately goes
+  // through `setConsentRequested` — the same path the Start button takes —
+  // so a spoken "start conversation" can't skip the consent gate.
+  useEffect(() => {
+    const unlistenAppend = onNoteAppendRequested((noteId) => {
       setMode("note");
-      note.start(noteId);
+      captureRef.current.note.start(noteId);
+    });
+    const unlistenNoteStart = onNoteStartRequested(() => {
+      setMode("note");
+      if (!captureRef.current.note.isActive) captureRef.current.note.start();
+    });
+    const unlistenConversationStart = onConversationStartRequested((personaId) => {
+      setMode("conversation");
+      // Applied here rather than by the sender so it can't land after the
+      // start. `activePersonaRef` inside useConversation is reassigned during
+      // the render this schedules, which runs before the consent effect that
+      // eventually calls start() — so start() sees the new persona.
+      if (personaId) updateRef.current("activePersonaId", personaId);
+      if (!captureRef.current.conversation.isActive) setConsentRequested(true);
+    });
+    const unlistenStop = onCaptureStopRequested(() => {
+      if (captureRef.current.note.isActive) captureRef.current.note.stop();
+      if (captureRef.current.conversation.isActive) captureRef.current.conversation.stop();
     });
     return () => {
-      unlisten.then((fn) => fn());
+      unlistenAppend.then((fn) => fn());
+      unlistenNoteStart.then((fn) => fn());
+      unlistenConversationStart.then((fn) => fn());
+      unlistenStop.then((fn) => fn());
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleClose = useCallback(() => {

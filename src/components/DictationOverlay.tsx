@@ -12,7 +12,17 @@ import { useSettings } from "@/hooks/useSettings";
 import { useHotkey } from "@/hooks/useHotkey";
 import { useConversation } from "@/hooks/useConversation";
 import { LoadingDots } from "@/components/ui/LoadingDots";
-import { showSettings, showConversationWindow, quitApp, getSetting, setSetting } from "@/services/tauriApi";
+import {
+  showSettings,
+  showConversationWindow,
+  quitApp,
+  getSetting,
+  setSetting,
+  requestConversationStart,
+  requestNoteStart,
+  requestCaptureStop,
+} from "@/services/tauriApi";
+import { detectVoiceCommand } from "@/config/voiceCommands";
 
 function DictationOverlayInner() {
   const { t } = useTranslation();
@@ -21,10 +31,47 @@ function DictationOverlayInner() {
     sendNotification({ title: props.title ?? t("overlay.notification.title"), body: props.description ?? "" });
   }, [t]);
 
-  const { phase, isRecording, isProcessing, audioLevel, start, stop, toggle, cancel } =
-    useDictation({ onToast: notifyError });
-
   const { settings, loaded } = useSettings();
+
+  // Spoken app commands ("Aral, start notes"). Recognized here because the
+  // overlay owns dictation, but deliberately *executed* by asking the
+  // Conversation window to do it — that window owns capture state, the
+  // consent gate, and persona selection, so a voice-started conversation
+  // goes through exactly the same path as a clicked one.
+  const handleVoiceCommand = useCallback(
+    async (text: string): Promise<boolean> => {
+      const command = detectVoiceCommand(
+        text,
+        settings.agentName,
+        settings.agentAliases,
+        settings.personas,
+      );
+      if (!command) return false;
+
+      try {
+        if (command.kind === "stop") {
+          await requestCaptureStop();
+          return true;
+        }
+        await showConversationWindow();
+        if (command.kind === "start-note") {
+          await requestNoteStart();
+        } else {
+          await requestConversationStart(command.personaId);
+        }
+        return true;
+      } catch (e) {
+        notifyError({ description: String(e) });
+        // Handled (and reported) — falling through to paste would type the
+        // command into whatever window is focused, which is worse.
+        return true;
+      }
+    },
+    [settings.agentName, settings.agentAliases, settings.personas, notifyError],
+  );
+
+  const { phase, isRecording, isProcessing, audioLevel, start, stop, toggle, cancel } =
+    useDictation({ onToast: notifyError, onVoiceCommand: handleVoiceCommand });
 
   // Lightweight instance — no transcript/suggestion state, autoTrigger off
   // (the dedicated Conversation window is the one that auto-fires

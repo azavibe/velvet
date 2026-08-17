@@ -9,6 +9,10 @@ interface Options {
     description: string;
     variant: "default" | "destructive" | "success";
   }) => void;
+  /** See useAudioRecording — standard mode only. Live mode types as you
+   *  speak, so there's no post-transcription point at which a command could
+   *  be intercepted before its text has already been typed out. */
+  onVoiceCommand?: (text: string) => Promise<boolean>;
 }
 
 export function useDictation(opts: Options = {}) {
@@ -31,7 +35,8 @@ export function useDictation(opts: Options = {}) {
   }, []);
 
   const standard = useAudioRecording(opts);
-  const live = useLiveDictation(opts);
+  const { onVoiceCommand: _unusedInLive, ...liveOpts } = opts;
+  const live = useLiveDictation(liveOpts);
   // If a session is in flight on either hook, keep returning that hook so the
   // overlay's stop/cancel buttons stay wired to it. Otherwise a mid-session
   // mode toggle in Settings would orphan the active session — the live hook

@@ -10,9 +10,10 @@
 - Suggestions come from a persona — a short system prompt with a name. Five are included (Meeting, Sales, Support, Language practice, Interview prep) and you can write your own
 - Choose whether suggestions appear automatically whenever the other side stops talking, or only on demand. Reuses your existing dictation hotkey — press it during a conversation to force a suggestion instead of starting dictation, since you're never doing both at once
 - Suggestions use their own model, independent of the Enhancement model — pick a different (or pricier) one without it affecting dictation, and it still works even with Enhancement turned off
-- Conversation history is kept indefinitely and viewable from Settings → Conversations; delete individual conversations from there
+- Conversation history moved out of Settings → Conversations and into History & Analytics, so dictations, conversations, and notes all live in one list instead of three places
 - Settings → Statistics is now History & Analytics: your usage stats plus every dictation and conversation as a card (date, duration, type, a snippet), expandable to the full transcript, with Copy and Delete (which also removes the saved audio) on each one
 - Audio is now saved alongside every transcript by default — one file per dictation, one per side of a conversation — so you can revisit or copy from a session later, not just its text
+- The agent now *does* things, not just answers: say "Aral, start notes", "Aral, start conversation", "Aral, support" (any persona name), or "Aral, stop" during dictation and the app acts on it instead of typing it out. A command has to be the whole utterance — "Aral, start notes with the following headings" is still a question for the agent, and ordinary dictation like "let's start a conversation about the roadmap" is untouched. Commands are listed in Settings → Agent
 - New Notes: mic-only capture in the Conversation window — pick "Take Note" from its persona dropdown instead of a persona. Start, pause (mic stops being captured entirely, not just skipped by silence detection), resume, and keep talking across as many pauses as you like, all as one note. From History, run an opt-in AI Markdown cleanup pass on a note, edit its text inline, or resume capture into it later with "Append Dictation"
 
 ### How it works

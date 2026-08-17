@@ -643,3 +643,41 @@ export async function requestNoteAppend(noteId: number): Promise<void> {
 export async function onNoteAppendRequested(callback: (noteId: number) => void): Promise<UnlistenFn> {
   return listen<number>("note-append-requested", (e) => callback(e.payload));
 }
+
+// --- Capture intents (voice commands) ---
+//
+// The overlay recognizes spoken commands but deliberately doesn't start
+// capture itself: the Conversation window is the single owner of capture
+// state, the consent gate, and the persona selection. These events ask it to
+// do exactly what its own buttons do, so a voice-started conversation goes
+// through the same consent check as a clicked one.
+
+/** `personaId` rides along in the payload rather than being applied by the
+ *  sender, so the persona switch and the start can't land out of order. */
+export async function requestConversationStart(personaId: string | null): Promise<void> {
+  await emit("conversation-start-requested", { personaId });
+}
+
+export async function onConversationStartRequested(
+  callback: (personaId: string | null) => void,
+): Promise<UnlistenFn> {
+  return listen<{ personaId: string | null }>("conversation-start-requested", (e) =>
+    callback(e.payload?.personaId ?? null),
+  );
+}
+
+export async function requestNoteStart(): Promise<void> {
+  await emit("note-start-requested");
+}
+
+export async function onNoteStartRequested(callback: () => void): Promise<UnlistenFn> {
+  return listen<void>("note-start-requested", () => callback());
+}
+
+export async function requestCaptureStop(): Promise<void> {
+  await emit("capture-stop-requested");
+}
+
+export async function onCaptureStopRequested(callback: () => void): Promise<UnlistenFn> {
+  return listen<void>("capture-stop-requested", () => callback());
+}

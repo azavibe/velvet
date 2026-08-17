@@ -5,17 +5,14 @@ import { Plus, Trash2, Handshake, LifeBuoy, Languages, GraduationCap, Users, Use
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import StyledSelect from "@/components/ui/StyledSelect";
-import { SettingsSection, SettingsRow } from "@/components/ui/SettingsSection";
+import { SettingsSection } from "@/components/ui/SettingsSection";
 import ProviderModelSelector from "./ProviderModelSelector";
 import { getReasoningProviders } from "./providerHelpers";
 import { createPersona, type Persona } from "@/models/persona";
 import {
   listAudioDevices,
-  listConversations,
-  deleteConversation,
   showConversationWindow,
   type AudioDevice,
-  type ConversationSummary,
 } from "@/services/tauriApi";
 import type { SectionProps } from "./types";
 
@@ -31,18 +28,10 @@ function PersonaIcon({ name, className }: { name: string; className?: string }) 
 export default function ConversationsSection({ settings, update }: SectionProps) {
   const { t } = useTranslation();
   const [devices, setDevices] = useState<AudioDevice[]>([]);
-  const [history, setHistory] = useState<ConversationSummary[]>([]);
   const [expandedPersonaId, setExpandedPersonaId] = useState<string | null>(null);
 
   useEffect(() => {
     listAudioDevices().then(setDevices).catch(() => {});
-  }, []);
-
-  const refreshHistory = () => {
-    listConversations(20, 0).then(setHistory).catch(() => {});
-  };
-  useEffect(() => {
-    refreshHistory();
   }, []);
 
   const updatePersona = (id: string, patch: Partial<Persona>) => {
@@ -190,26 +179,6 @@ export default function ConversationsSection({ settings, update }: SectionProps)
         </div>
       </SettingsSection>
 
-      <SettingsSection title={t("conversation.history.title")}>
-        {history.length === 0 && <p className="text-xs text-muted-foreground">{t("conversation.history.empty")}</p>}
-        <div className="space-y-1.5">
-          {history.map((c) => (
-            <SettingsRow key={c.id} label={c.title || t("conversation.history.untitled")} description={c.started_at}>
-              <button
-                type="button"
-                onClick={async () => {
-                  await deleteConversation(c.id);
-                  refreshHistory();
-                }}
-                aria-label={t("conversation.history.delete")}
-                className="text-muted-foreground hover:text-destructive transition-colors"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </SettingsRow>
-          ))}
-        </div>
-      </SettingsSection>
     </>
   );
 }

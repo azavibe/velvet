@@ -278,5 +278,15 @@
   "notes.cleanUp": "Clean up",
   "notes.cleaningUp": "Cleaning up…",
   "notes.cleanupFailed": "Cleanup failed",
-  "notes.cleanupNoKey": "Set an API key for the conversation reasoning model in Conversations settings first"
+  "notes.cleanupNoKey": "Set an API key for the conversation reasoning model in Conversations settings first",
+  "agent.commands.title": "Voice Commands",
+  "agent.commands.description": "Say one of these on its own during dictation and the app acts on it instead of typing it out. Anything else addressed to the agent is answered as a question.",
+  "agent.commands.notes.phrase": "start notes",
+  "agent.commands.notes.effect": "opens the panel and starts a note",
+  "agent.commands.conversation.phrase": "start conversation",
+  "agent.commands.conversation.effect": "opens the panel and starts a conversation",
+  "agent.commands.persona.phrase": "support",
+  "agent.commands.persona.effect": "starts a conversation using that persona (any persona name works)",
+  "agent.commands.stop.phrase": "stop",
+  "agent.commands.stop.effect": "ends the running note or conversation"
 }
