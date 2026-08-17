@@ -58,6 +58,24 @@ describe("voice command detection", () => {
     expect(detect("Hey Arrow, support")).toEqual({ kind: "start-conversation", personaId: "support" });
   });
 
+  test("real captures: no punctuation, and the name comes back mangled", () => {
+    // Verbatim transcripts from a device, where speech-to-text neither
+    // added a comma nor heard the name cleanly.
+    expect(detect("Aral Support", [])).toEqual({ kind: "start-conversation", personaId: "support" });
+    expect(detect("Aral Start Notes", [])).toEqual({ kind: "start-note" });
+    expect(detect("Aro Start notes", [])).toEqual({ kind: "start-note" });
+    // The recognizer doubles the wake word up on its own.
+    expect(detect("Aro Aro Start notes", [])).toEqual({ kind: "start-note" });
+    expect(detect("Aral Ahral Start Notes", [])).toEqual({ kind: "start-note" });
+  });
+
+  test("a mangled name still can't fire on non-command speech", () => {
+    // The looseness on the name is only safe because the rest of the
+    // utterance still has to be exactly a command.
+    expect(detect("Aro is the name of our new product", [])).toBeNull();
+    expect(detect("Ahral said he would start notes for the meeting", [])).toBeNull();
+  });
+
   test("ordinary dictation is never a command", () => {
     for (const text of [
       "let's start a conversation about the roadmap",

@@ -15,6 +15,7 @@ import {
 import type { EnhancementIntensity } from "@/config/prompts";
 import type { DictionaryEntry } from "@/models/dictionary";
 import { DEFAULT_PERSONAS, type Persona } from "@/models/persona";
+import { replaceIfDeprecated } from "@/models/deprecatedModels";
 
 export interface Settings {
   // Transcription
@@ -98,6 +99,10 @@ export interface Settings {
   qwenApiKey: string;
   openrouterApiKey: string;
 }
+
+/** The agent name shipped as the default before the app was renamed to
+ *  Aral — see the migration in `load()`. */
+const LEGACY_AGENT_NAME = "Whisperi";
 
 const DEFAULTS: Settings = {
   preferredLanguage: "auto",
@@ -220,7 +225,27 @@ export function useSettings() {
         }
       }
 
+      // Migration: providers retire models, and a stored id pointing at a
+      // shut-down model fails the API call rather than degrading — the user
+      // just sees enhancement or suggestions stop working. Remap to the
+      // provider's own recommended replacement.
+      for (const key of ["reasoningModel", "conversationReasoningModel"] as const) {
+        const replacement = replaceIfDeprecated(resolved[key]);
+        if (replacement !== resolved[key]) {
+          resolved[key] = replacement;
+          setSetting(key, replacement);
+        }
+      }
+
       resolved.agentName = agentNameVal;
+      // Migration: the app was renamed Whisperi → Aral, but only the default
+      // changed — an install that had the old name persisted would keep
+      // addressing an agent by the old app's name. Voice commands key off
+      // this exact name, so a stale value makes them silently do nothing.
+      if (resolved.agentName === LEGACY_AGENT_NAME) {
+        resolved.agentName = DEFAULTS.agentName;
+        setAgentNameApi(DEFAULTS.agentName);
+      }
       resolved.agentAliases = agentAliases;
       resolved.customDictionary = customDictionary;
       API_PROVIDERS.forEach((provider, i) => {
