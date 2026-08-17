@@ -10,8 +10,19 @@ import { Mic } from "lucide-react";
 import { useDictation } from "@/hooks/useDictation";
 import { useSettings } from "@/hooks/useSettings";
 import { useHotkey } from "@/hooks/useHotkey";
+import { useConversation } from "@/hooks/useConversation";
 import { LoadingDots } from "@/components/ui/LoadingDots";
-import { showSettings, quitApp, getSetting, setSetting } from "@/services/tauriApi";
+import {
+  showSettings,
+  showConversationWindow,
+  quitApp,
+  getSetting,
+  setSetting,
+  requestConversationStart,
+  requestNoteStart,
+  requestCaptureStop,
+} from "@/services/tauriApi";
+import { detectVoiceCommand } from "@/config/voiceCommands";
 
 function DictationOverlayInner() {
   const { t } = useTranslation();
@@ -20,10 +31,63 @@ function DictationOverlayInner() {
     sendNotification({ title: props.title ?? t("overlay.notification.title"), body: props.description ?? "" });
   }, [t]);
 
-  const { phase, isRecording, isProcessing, audioLevel, start, stop, toggle, cancel } =
-    useDictation({ onToast: notifyError });
-
   const { settings, loaded } = useSettings();
+
+  // Spoken app commands ("Aral, start notes"). Recognized here because the
+  // overlay owns dictation, but deliberately *executed* by asking the
+  // Conversation window to do it — that window owns capture state, the
+  // consent gate, and persona selection, so a voice-started conversation
+  // goes through exactly the same path as a clicked one.
+  const handleVoiceCommand = useCallback(
+    async (text: string): Promise<boolean> => {
+      const command = detectVoiceCommand(
+        text,
+        settings.agentName,
+        settings.agentAliases,
+        settings.personas,
+      );
+      if (!command) return false;
+
+      try {
+        if (command.kind === "stop") {
+          await requestCaptureStop();
+          return true;
+        }
+        await showConversationWindow();
+        if (command.kind === "start-note") {
+          await requestNoteStart();
+        } else {
+          await requestConversationStart(command.personaId);
+        }
+        return true;
+      } catch (e) {
+        notifyError({ description: String(e) });
+        // Handled (and reported) — falling through to paste would type the
+        // command into whatever window is focused, which is worse.
+        return true;
+      }
+    },
+    [settings.agentName, settings.agentAliases, settings.personas, notifyError],
+  );
+
+  const { phase, isRecording, isProcessing, audioLevel, start, stop, toggle, cancel } =
+    useDictation({ onToast: notifyError, onVoiceCommand: handleVoiceCommand });
+
+  // Lightweight instance — no transcript/suggestion state, autoTrigger off
+  // (the dedicated Conversation window is the one that auto-fires
+  // suggestions; this instance exists only so the dictation hotkey can
+  // check `isActive` and reuse itself as the "suggest now" trigger, and so
+  // the context menu can start/stop from here too).
+  const conversation = useConversation({
+    settings,
+    reasoningModel: settings.conversationReasoningModel,
+    reasoningProvider: settings.conversationReasoningProvider,
+    reasoningApiKey:
+      (settings[`${settings.conversationReasoningProvider}ApiKey` as keyof typeof settings] as string) ?? "",
+    groqApiKey: settings.groqApiKey,
+    autoTrigger: false,
+    onToast: notifyError,
+  });
 
   // On first launch: open settings if no API keys are configured.
   // After version change: open settings (the panel self-detects
@@ -85,13 +149,25 @@ function DictationOverlayInner() {
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
-  // Hotkey integration
+  // Hotkey integration — reused for conversation suggestions. While a
+  // conversation is active you're never also dictating, so the same key
+  // does double duty: triggers a suggestion instead of starting/stopping
+  // dictation. No separate hotkey to configure.
   useHotkey({
     shortcut: settings.dictationKey,
     activationMode: settings.activationMode,
-    onToggle: () => toggle(settings.selectedMicDeviceId || undefined),
-    onPushStart: () => start(settings.selectedMicDeviceId || undefined),
-    onPushEnd: () => stop(),
+    onToggle: () => {
+      if (conversation.isActive) { conversation.forceSuggestion(); return; }
+      toggle(settings.selectedMicDeviceId || undefined);
+    },
+    onPushStart: () => {
+      if (conversation.isActive) { conversation.forceSuggestion(); return; }
+      start(settings.selectedMicDeviceId || undefined);
+    },
+    onPushEnd: () => {
+      if (conversation.isActive) return; // avoid a second call on release
+      stop();
+    },
     enabled: loaded && !!settings.dictationKey && !hotkeyCapturing,
   });
 
@@ -108,11 +184,27 @@ function DictationOverlayInner() {
         );
       }
       items.push(await PredefinedMenuItem.new({ item: "Separator" }));
+      items.push(
+        await MenuItem.new({
+          id: "conversation",
+          text: conversation.isActive
+            ? t("overlay.menu.stopConversation")
+            : t("overlay.menu.openConversation"),
+          action: () => {
+            if (conversation.isActive) {
+              conversation.stop();
+            } else {
+              showConversationWindow();
+            }
+          },
+        }),
+      );
+      items.push(await PredefinedMenuItem.new({ item: "Separator" }));
       items.push(await MenuItem.new({ id: "quit", text: t("overlay.menu.quit"), action: () => quitApp() }));
       const menu = await Menu.new({ items });
       await menu.popup();
     },
-    [isRecording, cancel, t]
+    [isRecording, cancel, t, conversation]
   );
 
   // Drag-vs-click detection on the recording button

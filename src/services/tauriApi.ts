@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   normalizeDictionary,
   type DictionaryEntry,
@@ -120,6 +120,9 @@ export interface Transcription {
   processing_method: string;
   agent_name: string | null;
   error: string | null;
+  duration_ms: number | null;
+  word_count: number | null;
+  audio_path: string | null;
 }
 
 export async function saveTranscription(
@@ -129,6 +132,7 @@ export async function saveTranscription(
   agentName: string | null,
   error: string | null,
   durationMs: number | null,
+  audioData?: number[] | null,
 ): Promise<number> {
   return invoke("save_transcription", {
     originalText,
@@ -137,6 +141,7 @@ export async function saveTranscription(
     agentName,
     error,
     durationMs,
+    audioData: audioData ?? null,
   });
 }
 
@@ -207,10 +212,18 @@ export async function showSettings(): Promise<void> {
   return invoke("show_settings");
 }
 
+export async function showConversationWindow(): Promise<void> {
+  return invoke("show_conversation_window");
+}
+
+export async function hideConversationWindow(): Promise<void> {
+  return invoke("hide_conversation_window");
+}
+
 // --- Settings convenience helpers ---
 
 // Agent name
-const DEFAULT_AGENT_NAME = "Whisperi";
+const DEFAULT_AGENT_NAME = "Aral";
 
 export async function getAgentName(): Promise<string> {
   const name = await getSetting<string>("agentName");
@@ -377,4 +390,294 @@ export async function onLiveSessionClosed(
 // Settings change event
 export async function onSettingsChanged(callback: () => void): Promise<UnlistenFn> {
   return listen("settings-changed", () => callback());
+}
+
+// --- Conversations (live call copilot) ---
+
+export type ConversationChannel = "me" | "them";
+
+export interface ConversationUtteranceEvent {
+  id: number;
+  conversation_id: number;
+  channel: ConversationChannel;
+  started_at_ms: number;
+  text: string;
+}
+
+export interface ConversationSuggestionEvent {
+  id: number;
+  conversation_id: number;
+  created_at_ms: number;
+  persona_name: string | null;
+  text: string;
+}
+
+export interface ConversationErrorEvent {
+  conversation_id: number;
+  message: string;
+}
+
+export interface ConversationSummary {
+  id: number;
+  started_at: string;
+  ended_at: string | null;
+  title: string | null;
+  persona_name: string | null;
+  audio_path_me: string | null;
+  audio_path_them: string | null;
+  snippet: string | null;
+}
+
+export interface ConversationDetail {
+  conversation: ConversationSummary;
+  utterances: ConversationUtteranceEvent[];
+  suggestions: ConversationSuggestionEvent[];
+}
+
+export async function startConversation(
+  micDeviceId: string | undefined,
+  groqApiKey: string,
+  personaName: string | undefined,
+): Promise<number> {
+  return invoke("start_conversation", { micDeviceId, groqApiKey, personaName });
+}
+
+export async function stopConversation(conversationId: number, title?: string): Promise<void> {
+  return invoke("stop_conversation", { conversationId, title });
+}
+
+export async function getConversationAudioLevels(): Promise<[number, number]> {
+  return invoke("get_conversation_audio_levels");
+}
+
+export async function isConversationActive(): Promise<boolean> {
+  return invoke("is_conversation_active");
+}
+
+export async function getConversationError(): Promise<string | null> {
+  return invoke("get_conversation_error");
+}
+
+export async function listConversations(limit: number, offset: number): Promise<ConversationSummary[]> {
+  return invoke("list_conversations", { limit, offset });
+}
+
+export async function getConversation(conversationId: number): Promise<ConversationDetail> {
+  return invoke("get_conversation", { conversationId });
+}
+
+export async function deleteConversation(conversationId: number): Promise<void> {
+  return invoke("delete_conversation", { conversationId });
+}
+
+export async function generateSuggestion(
+  conversationId: number,
+  personaSystemPrompt: string,
+  personaName: string | undefined,
+  model: string,
+  provider: string,
+  apiKey: string,
+): Promise<string> {
+  return invoke("generate_suggestion", {
+    conversationId,
+    personaSystemPrompt,
+    personaName,
+    model,
+    provider,
+    apiKey,
+  });
+}
+
+export async function onConversationUtterance(
+  callback: (payload: ConversationUtteranceEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<ConversationUtteranceEvent>("conversation-utterance", (e) => callback(e.payload));
+}
+
+export async function onConversationSuggestion(
+  callback: (payload: ConversationSuggestionEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<ConversationSuggestionEvent>("conversation-suggestion", (e) => callback(e.payload));
+}
+
+export async function onConversationError(
+  callback: (payload: ConversationErrorEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<ConversationErrorEvent>("conversation-error", (e) => callback(e.payload));
+}
+
+export interface ConversationStartedEvent {
+  conversation_id: number;
+  persona_name: string | null;
+}
+
+/** Broadcast to every window regardless of which one issued the start/stop
+ *  command, so any window's UI reflects the true global state — there's
+ *  exactly one conversation possible at a time (the backend audio capture
+ *  is a single global resource). */
+export async function onConversationStarted(
+  callback: (payload: ConversationStartedEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<ConversationStartedEvent>("conversation-started", (e) => callback(e.payload));
+}
+
+export async function onConversationStopped(
+  callback: (conversationId: number) => void,
+): Promise<UnlistenFn> {
+  return listen<number>("conversation-stopped", (e) => callback(e.payload));
+}
+
+// --- Notes (mic-only capture with pause/resume) ---
+
+export interface Note {
+  id: number;
+  created_at: string;
+  updated_at: string;
+  title: string | null;
+  raw_transcript: string;
+  body_markdown: string | null;
+  audio_path: string | null;
+  tags: string[];
+}
+
+export interface NoteUtteranceEvent {
+  note_id: number;
+  started_at_ms: number;
+  text: string;
+}
+
+export interface NoteErrorEvent {
+  note_id: number;
+  message: string;
+}
+
+/** `noteId: undefined` creates a new note; pass an existing id to append
+ *  ("Append Dictation" from a History card). Either way resolves to the
+ *  note id capture is targeting. */
+export async function startNoteCapture(
+  micDeviceId: string | undefined,
+  groqApiKey: string,
+  noteId?: number,
+): Promise<number> {
+  return invoke("start_note_capture", { micDeviceId, groqApiKey, noteId });
+}
+
+export async function pauseNoteCapture(): Promise<void> {
+  return invoke("pause_note_capture");
+}
+
+export async function resumeNoteCapture(): Promise<void> {
+  return invoke("resume_note_capture");
+}
+
+export async function stopNoteCapture(): Promise<void> {
+  return invoke("stop_note_capture");
+}
+
+export async function isNoteCaptureActive(): Promise<boolean> {
+  return invoke("is_note_capture_active");
+}
+
+export async function isNoteCapturePaused(): Promise<boolean> {
+  return invoke("is_note_capture_paused");
+}
+
+export async function getNoteCaptureError(): Promise<string | null> {
+  return invoke("get_note_capture_error");
+}
+
+export async function listNotes(limit: number, offset: number): Promise<Note[]> {
+  return invoke("list_notes", { limit, offset });
+}
+
+export async function getNote(noteId: number): Promise<Note> {
+  return invoke("get_note", { noteId });
+}
+
+export async function updateNote(noteId: number, title: string | null, rawTranscript: string): Promise<void> {
+  return invoke("update_note", { noteId, title, rawTranscript });
+}
+
+export async function setNoteTitle(noteId: number, title: string): Promise<void> {
+  return invoke("set_note_title", { noteId, title });
+}
+
+export async function deleteNote(noteId: number): Promise<void> {
+  return invoke("delete_note", { noteId });
+}
+
+export async function cleanupNote(
+  noteId: number,
+  model: string,
+  provider: string,
+  apiKey: string,
+): Promise<string> {
+  return invoke("cleanup_note", { noteId, model, provider, apiKey });
+}
+
+export async function onNoteStarted(callback: (noteId: number) => void): Promise<UnlistenFn> {
+  return listen<number>("note-started", (e) => callback(e.payload));
+}
+
+export async function onNoteStopped(callback: () => void): Promise<UnlistenFn> {
+  return listen<void>("note-stopped", () => callback());
+}
+
+export async function onNoteUtterance(callback: (payload: NoteUtteranceEvent) => void): Promise<UnlistenFn> {
+  return listen<NoteUtteranceEvent>("note-utterance", (e) => callback(e.payload));
+}
+
+export async function onNoteError(callback: (payload: NoteErrorEvent) => void): Promise<UnlistenFn> {
+  return listen<NoteErrorEvent>("note-error", (e) => callback(e.payload));
+}
+
+/** "Append Dictation" on a History card: the Settings window can't start
+ *  capture itself (that lives in the Conversation window), so it shows that
+ *  window and asks it to resume capture into this note via a plain
+ *  frontend-to-frontend event — no backend command needed since both sides
+ *  are already-permitted windows listening/emitting on the same channel. */
+export async function requestNoteAppend(noteId: number): Promise<void> {
+  await emit("note-append-requested", noteId);
+}
+
+export async function onNoteAppendRequested(callback: (noteId: number) => void): Promise<UnlistenFn> {
+  return listen<number>("note-append-requested", (e) => callback(e.payload));
+}
+
+// --- Capture intents (voice commands) ---
+//
+// The overlay recognizes spoken commands but deliberately doesn't start
+// capture itself: the Conversation window is the single owner of capture
+// state, the consent gate, and the persona selection. These events ask it to
+// do exactly what its own buttons do, so a voice-started conversation goes
+// through the same consent check as a clicked one.
+
+/** `personaId` rides along in the payload rather than being applied by the
+ *  sender, so the persona switch and the start can't land out of order. */
+export async function requestConversationStart(personaId: string | null): Promise<void> {
+  await emit("conversation-start-requested", { personaId });
+}
+
+export async function onConversationStartRequested(
+  callback: (personaId: string | null) => void,
+): Promise<UnlistenFn> {
+  return listen<{ personaId: string | null }>("conversation-start-requested", (e) =>
+    callback(e.payload?.personaId ?? null),
+  );
+}
+
+export async function requestNoteStart(): Promise<void> {
+  await emit("note-start-requested");
+}
+
+export async function onNoteStartRequested(callback: () => void): Promise<UnlistenFn> {
+  return listen<void>("note-start-requested", () => callback());
+}
+
+export async function requestCaptureStop(): Promise<void> {
+  await emit("capture-stop-requested");
+}
+
+export async function onCaptureStopRequested(callback: () => void): Promise<UnlistenFn> {
+  return listen<void>("capture-stop-requested", () => callback());
 }

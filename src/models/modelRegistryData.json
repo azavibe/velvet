@@ -188,41 +188,23 @@
       "name": "Groq",
       "models": [
         {
-          "id": "meta-llama/llama-4-scout-17b-16e-instruct",
-          "name": "LLaMA 4 Scout",
-          "params": "109B MoE",
-          "description": "Latest Meta model, 17B active, 16 experts"
-        },
-        {
-          "id": "qwen/qwen3-32b",
-          "name": "Qwen3 32B",
-          "params": "32B",
-          "description": "Powerful reasoning, 131K context",
-          "disableThinking": true
-        },
-        {
           "id": "openai/gpt-oss-120b",
           "name": "GPT-OSS 120B",
           "params": "117B MoE",
-          "description": "OpenAI open-source flagship, 5.1B active"
+          "description": "Groq's flagship open-weight model, 131K context"
         },
         {
           "id": "openai/gpt-oss-20b",
           "name": "GPT-OSS 20B",
           "params": "21B MoE",
-          "description": "Fast open-source model, 3.6B active"
+          "description": "Fastest option at ~1000 T/sec, 131K context"
         },
         {
-          "id": "llama-3.3-70b-versatile",
-          "name": "LLaMA 3.3 70B",
-          "params": "70B",
-          "description": "Meta's versatile model, 280 T/sec"
-        },
-        {
-          "id": "llama-3.1-8b-instant",
-          "name": "LLaMA 3.1 8B",
-          "params": "8B",
-          "description": "Ultra-fast 560 T/sec, 131K context"
+          "id": "qwen/qwen3.6-27b",
+          "name": "Qwen3.6 27B",
+          "params": "27B",
+          "description": "Preview — stronger reasoning, but may be withdrawn at short notice",
+          "disableThinking": true
         }
       ]
     },

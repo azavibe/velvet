@@ -23,6 +23,13 @@ pub struct Transcription {
     pub processing_method: String,
     pub agent_name: Option<String>,
     pub error: Option<String>,
+    pub duration_ms: Option<i64>,
+    pub word_count: Option<i64>,
+    /// Local WAV file, if the recording was archived to disk. Set by a
+    /// background write shortly after the row is created (see
+    /// `update_transcription_audio_path`), so a just-saved row can briefly
+    /// have this as `None`.
+    pub audio_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -41,11 +48,80 @@ pub struct StatsPayload {
     pub avg_words: f64,
 }
 
+/// Summary row for the Conversations history list — no utterances/suggestions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationSummary {
+    pub id: i64,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    pub title: Option<String>,
+    pub persona_name: Option<String>,
+    /// Local WAV files for each channel, if archived (see
+    /// `update_conversation_audio_paths`). Either can be `None` if that
+    /// channel never captured any audio during the call.
+    pub audio_path_me: Option<String>,
+    pub audio_path_them: Option<String>,
+    /// First utterance's text, for a collapsed-card preview without
+    /// fetching the full transcript. `None` for a conversation with no
+    /// utterances (e.g. started and immediately stopped).
+    pub snippet: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationUtterance {
+    pub id: i64,
+    pub conversation_id: i64,
+    /// "me" (microphone) or "them" (system-audio loopback).
+    pub channel: String,
+    pub started_at_ms: i64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationSuggestion {
+    pub id: i64,
+    pub conversation_id: i64,
+    pub created_at_ms: i64,
+    pub persona_name: Option<String>,
+    pub text: String,
+}
+
+/// Full detail view for one conversation: the parent row plus its
+/// utterances and suggestions, each already ordered for display.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationDetail {
+    pub conversation: ConversationSummary,
+    pub utterances: Vec<ConversationUtterance>,
+    pub suggestions: Vec<ConversationSuggestion>,
+}
+
+/// A Note: mic-only capture with inline editing and an optional AI
+/// Markdown cleanup pass. `raw_transcript` is what capture produced and is
+/// never overwritten by cleanup; `body_markdown` is the opt-in cleaned-up
+/// version, `None` until the user runs cleanup. History cards show
+/// `body_markdown` when present, falling back to `raw_transcript`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Note {
+    pub id: i64,
+    pub created_at: String,
+    pub updated_at: String,
+    pub title: Option<String>,
+    pub raw_transcript: String,
+    pub body_markdown: Option<String>,
+    pub audio_path: Option<String>,
+    pub tags: Vec<String>,
+}
+
 /// Initialize the database and store it in Tauri's managed state
 pub fn init(app: &AppHandle) -> Result<()> {
     let db_path = get_db_path(app)?;
     let conn = Connection::open(&db_path)
         .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
+
+    // Required for `ON DELETE CASCADE` on conversation_utterances/conversation_suggestions
+    // (v3 migration) to actually cascade — SQLite ignores FK constraints unless this
+    // pragma is set per-connection.
+    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
 
     migrations::run(&conn)?;
 
@@ -70,6 +146,7 @@ impl Database {
     #[cfg(test)]
     fn new_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         migrations::run(&conn)?;
         Ok(Database {
             conn: Mutex::new(conn),
@@ -113,7 +190,7 @@ impl Database {
     pub fn get_transcriptions(&self, limit: u32, offset: u32) -> Result<Vec<Transcription>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, timestamp, original_text, processed_text, is_processed, processing_method, agent_name, error
+            "SELECT id, timestamp, original_text, processed_text, is_processed, processing_method, agent_name, error, duration_ms, word_count, audio_path
              FROM transcriptions ORDER BY id DESC LIMIT ?1 OFFSET ?2",
         )?;
 
@@ -127,21 +204,53 @@ impl Database {
                 processing_method: row.get(5)?,
                 agent_name: row.get(6)?,
                 error: row.get(7)?,
+                duration_ms: row.get(8)?,
+                word_count: row.get(9)?,
+                audio_path: row.get(10)?,
             })
         })?;
 
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    /// Set once a dictation's audio has been written to disk (the write
+    /// happens in a background task after the row is already saved, so
+    /// this is a follow-up UPDATE rather than part of the initial INSERT).
+    pub fn update_transcription_audio_path(&self, id: i64, path: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE transcriptions SET audio_path = ?2 WHERE id = ?1",
+            rusqlite::params![id, path],
+        )?;
+        Ok(())
+    }
+
+    /// Deletes the row and, best-effort, its archived audio file. A missing
+    /// or already-deleted file is not an error — the row is the source of
+    /// truth for whether the recording ever existed.
     pub fn delete_transcription(&self, id: i64) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let audio_path: Option<String> = conn
+            .query_row("SELECT audio_path FROM transcriptions WHERE id = ?1", [id], |r| r.get(0))
+            .ok();
         conn.execute("DELETE FROM transcriptions WHERE id = ?1", [id])?;
+        if let Some(path) = audio_path.filter(|p| !p.is_empty()) {
+            let _ = std::fs::remove_file(path);
+        }
         Ok(())
     }
 
     pub fn clear_transcriptions(&self) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let paths: Vec<String> = {
+            let mut stmt = conn.prepare("SELECT audio_path FROM transcriptions WHERE audio_path IS NOT NULL")?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
         conn.execute("DELETE FROM transcriptions", [])?;
+        for path in paths {
+            let _ = std::fs::remove_file(path);
+        }
         Ok(())
     }
 
@@ -215,6 +324,348 @@ impl Database {
             avg_seconds,
             avg_words,
         })
+    }
+
+    // --- Conversations ---
+
+    pub fn create_conversation(&self, persona_name: Option<&str>) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO conversations (persona_name) VALUES (?1)",
+            rusqlite::params![persona_name],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn end_conversation(&self, conversation_id: i64, title: Option<&str>) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE conversations SET ended_at = CURRENT_TIMESTAMP, title = COALESCE(?2, title) WHERE id = ?1",
+            rusqlite::params![conversation_id, title],
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_conversation_utterance(
+        &self,
+        conversation_id: i64,
+        channel: &str,
+        started_at_ms: i64,
+        text: &str,
+    ) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO conversation_utterances (conversation_id, channel, started_at_ms, text)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![conversation_id, channel, started_at_ms, text],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn insert_conversation_suggestion(
+        &self,
+        conversation_id: i64,
+        created_at_ms: i64,
+        persona_name: Option<&str>,
+        text: &str,
+    ) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO conversation_suggestions (conversation_id, created_at_ms, persona_name, text)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![conversation_id, created_at_ms, persona_name, text],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Utterances on `conversation_id` at or after `since_ms`, any channel,
+    /// oldest first. Used for echo detection — checking whether a
+    /// just-transcribed chunk on one channel is actually the other
+    /// channel's audio bleeding into the microphone (speaker playback,
+    /// not headphones).
+    pub fn get_recent_utterances(&self, conversation_id: i64, since_ms: i64) -> Result<Vec<ConversationUtterance>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, conversation_id, channel, started_at_ms, text
+             FROM conversation_utterances WHERE conversation_id = ?1 AND started_at_ms >= ?2
+             ORDER BY started_at_ms ASC",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![conversation_id, since_ms], |row| {
+            Ok(ConversationUtterance {
+                id: row.get(0)?,
+                conversation_id: row.get(1)?,
+                channel: row.get(2)?,
+                started_at_ms: row.get(3)?,
+                text: row.get(4)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn list_conversations(&self, limit: u32, offset: u32) -> Result<Vec<ConversationSummary>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT c.id, c.started_at, c.ended_at, c.title, c.persona_name,
+                    c.audio_path_me, c.audio_path_them,
+                    (SELECT text FROM conversation_utterances u
+                     WHERE u.conversation_id = c.id ORDER BY u.started_at_ms ASC, u.id ASC LIMIT 1) AS snippet
+             FROM conversations c ORDER BY c.id DESC LIMIT ?1 OFFSET ?2",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![limit, offset], |row| {
+            Ok(ConversationSummary {
+                id: row.get(0)?,
+                started_at: row.get(1)?,
+                ended_at: row.get(2)?,
+                title: row.get(3)?,
+                persona_name: row.get(4)?,
+                audio_path_me: row.get(5)?,
+                audio_path_them: row.get(6)?,
+                snippet: row.get(7)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn get_conversation(&self, conversation_id: i64) -> Result<ConversationDetail> {
+        let conn = self.conn.lock().unwrap();
+
+        let conversation = conn.query_row(
+            "SELECT c.id, c.started_at, c.ended_at, c.title, c.persona_name,
+                    c.audio_path_me, c.audio_path_them,
+                    (SELECT text FROM conversation_utterances u
+                     WHERE u.conversation_id = c.id ORDER BY u.started_at_ms ASC, u.id ASC LIMIT 1) AS snippet
+             FROM conversations c WHERE c.id = ?1",
+            rusqlite::params![conversation_id],
+            |row| {
+                Ok(ConversationSummary {
+                    id: row.get(0)?,
+                    started_at: row.get(1)?,
+                    ended_at: row.get(2)?,
+                    title: row.get(3)?,
+                    persona_name: row.get(4)?,
+                    audio_path_me: row.get(5)?,
+                    audio_path_them: row.get(6)?,
+                    snippet: row.get(7)?,
+                })
+            },
+        )?;
+
+        let utterances = {
+            let mut stmt = conn.prepare(
+                "SELECT id, conversation_id, channel, started_at_ms, text
+                 FROM conversation_utterances WHERE conversation_id = ?1 ORDER BY started_at_ms ASC, id ASC",
+            )?;
+            let rows = stmt.query_map(rusqlite::params![conversation_id], |row| {
+                Ok(ConversationUtterance {
+                    id: row.get(0)?,
+                    conversation_id: row.get(1)?,
+                    channel: row.get(2)?,
+                    started_at_ms: row.get(3)?,
+                    text: row.get(4)?,
+                })
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+
+        let suggestions = {
+            let mut stmt = conn.prepare(
+                "SELECT id, conversation_id, created_at_ms, persona_name, text
+                 FROM conversation_suggestions WHERE conversation_id = ?1 ORDER BY created_at_ms ASC, id ASC",
+            )?;
+            let rows = stmt.query_map(rusqlite::params![conversation_id], |row| {
+                Ok(ConversationSuggestion {
+                    id: row.get(0)?,
+                    conversation_id: row.get(1)?,
+                    created_at_ms: row.get(2)?,
+                    persona_name: row.get(3)?,
+                    text: row.get(4)?,
+                })
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+
+        Ok(ConversationDetail {
+            conversation,
+            utterances,
+            suggestions,
+        })
+    }
+
+    /// Set once each channel's audio has been archived to disk (see
+    /// `ConversationAudioArchive` in commands/conversation.rs). Either path
+    /// may be `None` if that channel never captured anything, so both are
+    /// updated independently via `COALESCE` rather than overwriting a path
+    /// already recorded for the other channel.
+    pub fn update_conversation_audio_paths(
+        &self,
+        conversation_id: i64,
+        audio_path_me: Option<&str>,
+        audio_path_them: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE conversations SET
+                audio_path_me = COALESCE(?2, audio_path_me),
+                audio_path_them = COALESCE(?3, audio_path_them)
+             WHERE id = ?1",
+            rusqlite::params![conversation_id, audio_path_me, audio_path_them],
+        )?;
+        Ok(())
+    }
+
+    /// Deletes the row (and its utterances/suggestions) and, best-effort,
+    /// both archived audio files. A missing file is not an error.
+    pub fn delete_conversation(&self, conversation_id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let audio_paths: Option<(Option<String>, Option<String>)> = conn
+            .query_row(
+                "SELECT audio_path_me, audio_path_them FROM conversations WHERE id = ?1",
+                rusqlite::params![conversation_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok();
+
+        // Explicit cascade, not just relying on the FK pragma: belt-and-braces
+        // in case a future connection opens without `PRAGMA foreign_keys = ON`.
+        conn.execute(
+            "DELETE FROM conversation_suggestions WHERE conversation_id = ?1",
+            rusqlite::params![conversation_id],
+        )?;
+        conn.execute(
+            "DELETE FROM conversation_utterances WHERE conversation_id = ?1",
+            rusqlite::params![conversation_id],
+        )?;
+        conn.execute(
+            "DELETE FROM conversations WHERE id = ?1",
+            rusqlite::params![conversation_id],
+        )?;
+
+        if let Some((me, them)) = audio_paths {
+            if let Some(path) = me.filter(|p| !p.is_empty()) {
+                let _ = std::fs::remove_file(path);
+            }
+            if let Some(path) = them.filter(|p| !p.is_empty()) {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+        Ok(())
+    }
+
+    // --- Notes ---
+
+    fn row_to_note(row: &rusqlite::Row) -> rusqlite::Result<Note> {
+        let tags_json: String = row.get(6)?;
+        let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+        Ok(Note {
+            id: row.get(0)?,
+            created_at: row.get(1)?,
+            updated_at: row.get(2)?,
+            title: row.get(3)?,
+            raw_transcript: row.get(4)?,
+            body_markdown: row.get(5)?,
+            tags,
+            audio_path: row.get(7)?,
+        })
+    }
+
+    const NOTE_COLUMNS: &'static str =
+        "id, created_at, updated_at, title, raw_transcript, body_markdown, tags, audio_path";
+
+    pub fn create_note(&self) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("INSERT INTO notes DEFAULT VALUES", [])?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Appends transcribed text to a note's running transcript — used both
+    /// for the live capture stream and for "Append Dictation" on an
+    /// existing note. Bumps `updated_at` so the note resurfaces at the top
+    /// of the newest-first history list.
+    pub fn append_note_transcript(&self, note_id: i64, text: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE notes SET
+                raw_transcript = CASE WHEN raw_transcript = '' THEN ?2 ELSE raw_transcript || ' ' || ?2 END,
+                updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?1",
+            rusqlite::params![note_id, text],
+        )?;
+        Ok(())
+    }
+
+    /// Inline edit: overwrites title/transcript with user-provided text.
+    /// `body_markdown` isn't touched here — editing the raw transcript
+    /// after a cleanup pass leaves the cleaned version as-is until the user
+    /// re-runs cleanup, rather than silently invalidating it.
+    pub fn update_note(&self, note_id: i64, title: Option<&str>, raw_transcript: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE notes SET title = ?2, raw_transcript = ?3, updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
+            rusqlite::params![note_id, title, raw_transcript],
+        )?;
+        Ok(())
+    }
+
+    /// Title-only update — used by the live capture window, which doesn't
+    /// have (and shouldn't need to reconstruct) the authoritative
+    /// server-side transcript text that `update_note` would otherwise
+    /// overwrite.
+    pub fn set_note_title(&self, note_id: i64, title: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE notes SET title = ?2, updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
+            rusqlite::params![note_id, title],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_note_markdown(&self, note_id: i64, body_markdown: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE notes SET body_markdown = ?2, updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
+            rusqlite::params![note_id, body_markdown],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_note_audio_path(&self, note_id: i64, audio_path: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE notes SET audio_path = ?2 WHERE id = ?1",
+            rusqlite::params![note_id, audio_path],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_notes(&self, limit: u32, offset: u32) -> Result<Vec<Note>> {
+        let conn = self.conn.lock().unwrap();
+        let sql = format!(
+            "SELECT {} FROM notes ORDER BY updated_at DESC LIMIT ?1 OFFSET ?2",
+            Self::NOTE_COLUMNS
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params![limit, offset], Self::row_to_note)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn get_note(&self, note_id: i64) -> Result<Note> {
+        let conn = self.conn.lock().unwrap();
+        let sql = format!("SELECT {} FROM notes WHERE id = ?1", Self::NOTE_COLUMNS);
+        conn.query_row(&sql, rusqlite::params![note_id], Self::row_to_note)
+            .map_err(Into::into)
+    }
+
+    /// Deletes the row and, best-effort, its archived audio file.
+    pub fn delete_note(&self, note_id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let audio_path: Option<String> = conn
+            .query_row("SELECT audio_path FROM notes WHERE id = ?1", [note_id], |r| r.get(0))
+            .ok();
+        conn.execute("DELETE FROM notes WHERE id = ?1", [note_id])?;
+        if let Some(path) = audio_path.filter(|p| !p.is_empty()) {
+            let _ = std::fs::remove_file(path);
+        }
+        Ok(())
     }
 }
 
@@ -362,5 +813,152 @@ mod tests {
         assert_eq!(week.total_recordings, 1);
         assert_eq!(week.total_seconds, 2);
         assert_eq!(week.total_words, 4);
+    }
+
+    #[test]
+    fn conversation_round_trip_orders_by_started_at_ms() {
+        let db = Database::new_in_memory().unwrap();
+        let id = db.create_conversation(Some("Sales")).unwrap();
+
+        // Insert out of wall-clock order to prove the query sorts by
+        // started_at_ms, not insertion order — the two capture channels
+        // finish transcribing independently and can arrive in either order.
+        db.insert_conversation_utterance(id, "them", 2000, "so what's your budget")
+            .unwrap();
+        db.insert_conversation_utterance(id, "me", 1000, "hi thanks for taking the call")
+            .unwrap();
+        db.insert_conversation_suggestion(id, 2500, Some("Sales"), "mention the annual discount")
+            .unwrap();
+
+        db.end_conversation(id, Some("Discovery call")).unwrap();
+
+        let detail = db.get_conversation(id).unwrap();
+        assert_eq!(detail.conversation.title.as_deref(), Some("Discovery call"));
+        assert!(detail.conversation.ended_at.is_some());
+        assert_eq!(detail.utterances.len(), 2);
+        assert_eq!(detail.utterances[0].channel, "me");
+        assert_eq!(detail.utterances[1].channel, "them");
+        assert_eq!(detail.suggestions.len(), 1);
+    }
+
+    #[test]
+    fn delete_conversation_cascades_utterances_and_suggestions() {
+        let db = Database::new_in_memory().unwrap();
+        let id = db.create_conversation(None).unwrap();
+        db.insert_conversation_utterance(id, "me", 0, "hello").unwrap();
+        db.insert_conversation_suggestion(id, 0, None, "say hi back").unwrap();
+
+        db.delete_conversation(id).unwrap();
+
+        let conn = db.conn.lock().unwrap();
+        let conversations: i64 = conn
+            .query_row("SELECT COUNT(*) FROM conversations", [], |r| r.get(0))
+            .unwrap();
+        let utterances: i64 = conn
+            .query_row("SELECT COUNT(*) FROM conversation_utterances", [], |r| r.get(0))
+            .unwrap();
+        let suggestions: i64 = conn
+            .query_row("SELECT COUNT(*) FROM conversation_suggestions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(conversations, 0);
+        assert_eq!(utterances, 0);
+        assert_eq!(suggestions, 0);
+    }
+
+    #[test]
+    fn list_conversations_orders_newest_first() {
+        let db = Database::new_in_memory().unwrap();
+        let first = db.create_conversation(None).unwrap();
+        let second = db.create_conversation(None).unwrap();
+
+        let list = db.list_conversations(10, 0).unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].id, second);
+        assert_eq!(list[1].id, first);
+    }
+
+    #[test]
+    fn get_recent_utterances_filters_by_time_and_includes_both_channels() {
+        let db = Database::new_in_memory().unwrap();
+        let id = db.create_conversation(None).unwrap();
+        db.insert_conversation_utterance(id, "me", 1000, "old one").unwrap();
+        db.insert_conversation_utterance(id, "them", 5000, "recent them").unwrap();
+        db.insert_conversation_utterance(id, "me", 5200, "recent me").unwrap();
+
+        let recent = db.get_recent_utterances(id, 4000).unwrap();
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].text, "recent them");
+        assert_eq!(recent[1].text, "recent me");
+    }
+
+    #[test]
+    fn create_note_starts_empty_with_default_fields() {
+        let db = Database::new_in_memory().unwrap();
+        let id = db.create_note().unwrap();
+        let note = db.get_note(id).unwrap();
+        assert_eq!(note.title, None);
+        assert_eq!(note.raw_transcript, "");
+        assert_eq!(note.body_markdown, None);
+        assert_eq!(note.audio_path, None);
+        assert!(note.tags.is_empty());
+    }
+
+    #[test]
+    fn append_note_transcript_joins_chunks_with_a_space() {
+        let db = Database::new_in_memory().unwrap();
+        let id = db.create_note().unwrap();
+        db.append_note_transcript(id, "hello").unwrap();
+        db.append_note_transcript(id, "world").unwrap();
+        let note = db.get_note(id).unwrap();
+        assert_eq!(note.raw_transcript, "hello world");
+    }
+
+    #[test]
+    fn update_note_overwrites_title_and_transcript_but_not_markdown() {
+        let db = Database::new_in_memory().unwrap();
+        let id = db.create_note().unwrap();
+        db.append_note_transcript(id, "raw text").unwrap();
+        db.set_note_markdown(id, "# Title\n\ncleaned up").unwrap();
+
+        db.update_note(id, Some("My title"), "edited raw text").unwrap();
+
+        let note = db.get_note(id).unwrap();
+        assert_eq!(note.title.as_deref(), Some("My title"));
+        assert_eq!(note.raw_transcript, "edited raw text");
+        assert_eq!(note.body_markdown.as_deref(), Some("# Title\n\ncleaned up"));
+    }
+
+    #[test]
+    fn set_note_title_does_not_touch_transcript() {
+        let db = Database::new_in_memory().unwrap();
+        let id = db.create_note().unwrap();
+        db.append_note_transcript(id, "keep me").unwrap();
+        db.set_note_title(id, "Renamed").unwrap();
+
+        let note = db.get_note(id).unwrap();
+        assert_eq!(note.title.as_deref(), Some("Renamed"));
+        assert_eq!(note.raw_transcript, "keep me");
+    }
+
+    #[test]
+    fn list_notes_orders_most_recently_updated_first() {
+        let db = Database::new_in_memory().unwrap();
+        let first = db.create_note().unwrap();
+        let second = db.create_note().unwrap();
+        // Touch the first note again so it should resurface at the top.
+        db.append_note_transcript(first, "later addition").unwrap();
+
+        let list = db.list_notes(10, 0).unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].id, first);
+        assert_eq!(list[1].id, second);
+    }
+
+    #[test]
+    fn delete_note_removes_the_row() {
+        let db = Database::new_in_memory().unwrap();
+        let id = db.create_note().unwrap();
+        db.delete_note(id).unwrap();
+        assert!(db.get_note(id).is_err());
     }
 }

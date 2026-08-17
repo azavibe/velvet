@@ -5,8 +5,9 @@ import { listen } from "@tauri-apps/api/event";
 import { getSetting } from "@/services/tauriApi";
 import DictationOverlay from "@/components/DictationOverlay";
 import SettingsPanel from "@/components/settings/SettingsPanel";
+import ConversationWindow from "@/components/ConversationWindow";
 
-type AppView = "overlay" | "settings";
+type AppView = "overlay" | "settings" | "conversation";
 
 function App() {
   const [view, setView] = useState<AppView>("overlay");
@@ -16,6 +17,8 @@ function App() {
     const label = getCurrentWebviewWindow().label;
     if (label === "settings") {
       setView("settings");
+    } else if (label === "conversation") {
+      setView("conversation");
     }
   }, []);
 
@@ -38,6 +41,10 @@ function App() {
 
   if (view === "settings") {
     return <SettingsPanel />;
+  }
+
+  if (view === "conversation") {
+    return <ConversationWindow />;
   }
 
   return <DictationOverlay />;

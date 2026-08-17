@@ -9,6 +9,7 @@ import {
   Brain,
   BookOpen,
   Bot,
+  MessagesSquare,
   Wrench,
   BarChart3,
   Info,
@@ -25,6 +26,7 @@ import TranscriptionSection from "./TranscriptionSection";
 import AIModelsSection from "./AIModelsSection";
 import DictionarySection from "./DictionarySection";
 import AgentSection from "./AgentSection";
+import ConversationsSection from "./ConversationsSection";
 import DeveloperSection from "./DeveloperSection";
 import StatisticsSection from "./StatisticsSection";
 import AboutSection from "./AboutSection";
@@ -35,6 +37,7 @@ type Section =
   | "ai-models"
   | "dictionary"
   | "agent"
+  | "conversations"
   | "developer"
   | "statistics"
   | "about";
@@ -45,6 +48,7 @@ const SECTION_DEFS = [
   { id: "ai-models" as Section, labelKey: "nav.enhancement" as const, icon: Brain },
   { id: "dictionary" as Section, labelKey: "nav.dictionary" as const, icon: BookOpen },
   { id: "agent" as Section, labelKey: "nav.agent" as const, icon: Bot },
+  { id: "conversations" as Section, labelKey: "nav.conversations" as const, icon: MessagesSquare },
   { id: "developer" as Section, labelKey: "nav.developer" as const, icon: Wrench },
   { id: "statistics" as Section, labelKey: "nav.statistics" as const, icon: BarChart3 },
   { id: "about" as Section, labelKey: "nav.about" as const, icon: Info },
@@ -189,10 +193,13 @@ function SettingsPanelInner() {
             {section === "agent" && (
               <AgentSection settings={settings} update={update} />
             )}
+            {section === "conversations" && (
+              <ConversationsSection settings={settings} update={update} toast={toast} />
+            )}
             {section === "developer" && (
               <DeveloperSection settings={settings} update={update} toast={toast} />
             )}
-            {section === "statistics" && <StatisticsSection />}
+            {section === "statistics" && <StatisticsSection settings={settings} toast={toast} />}
             {section === "about" && <AboutSection />}
           </div>
         </div>

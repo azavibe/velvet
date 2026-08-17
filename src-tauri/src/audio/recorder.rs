@@ -10,7 +10,7 @@ use std::thread::JoinHandle;
 use thiserror::Error;
 
 /// Target sample rate for whisper.cpp input.
-const TARGET_SAMPLE_RATE: u32 = 16_000;
+pub(crate) const TARGET_SAMPLE_RATE: u32 = 16_000;
 
 /// Arc handles needed by the audio level emitter thread.
 pub type LevelEmitterHandles = (Arc<AtomicBool>, Arc<Mutex<f32>>, Arc<Mutex<Option<String>>>);
@@ -318,7 +318,7 @@ pub(crate) fn is_speechless(samples: &[f32], sample_rate: u32) -> bool {
 
 /// Negotiate the best stream config for the device.
 /// Tries preferred sample rates first, then falls back to the device default.
-fn negotiate_config(
+pub(crate) fn negotiate_config(
     device: &cpal::Device,
 ) -> Result<(StreamConfig, SampleFormat), AudioError> {
     let supported_configs = device
@@ -494,7 +494,7 @@ where
 }
 
 /// Simple linear resampling from source rate to target rate
-fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+pub(crate) fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
     if from_rate == to_rate {
         return samples.to_vec();
     }
@@ -523,7 +523,7 @@ fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
 }
 
 /// Encode f32 samples as a WAV byte buffer (16-bit PCM, 16kHz, mono)
-fn encode_wav(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>, AudioError> {
+pub(crate) fn encode_wav(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>, AudioError> {
     let spec = WavSpec {
         channels: 1,
         sample_rate,

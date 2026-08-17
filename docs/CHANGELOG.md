@@ -2,6 +2,55 @@
 
 ## [Unreleased]
 
+## [0.8.8] - 2026-08-16
+
+### Highlights
+
+- New Conversations feature: a live copilot for calls, in its own resizable, always-on-top panel. Open it from the tray/overlay right-click menu or Settings → Conversations, pick a persona, hit Start — it listens to both you and the other side, transcribes both separately in real time, and suggests what to say next right there
+- Suggestions come from a persona — a short system prompt with a name. Five are included (Meeting, Sales, Support, Language practice, Interview prep) and you can write your own
+- Choose whether suggestions appear automatically whenever the other side stops talking, or only on demand. Reuses your existing dictation hotkey — press it during a conversation to force a suggestion instead of starting dictation, since you're never doing both at once
+- Suggestions use their own model, independent of the Enhancement model — pick a different (or pricier) one without it affecting dictation, and it still works even with Enhancement turned off
+- Conversation history moved out of Settings → Conversations and into History & Analytics, so dictations, conversations, and notes all live in one list instead of three places
+- Settings → Statistics is now History & Analytics: your usage stats plus every dictation and conversation as a card (date, duration, type, a snippet), expandable to the full transcript, with Copy and Delete (which also removes the saved audio) on each one
+- Audio is now saved alongside every transcript by default — one file per dictation, one per side of a conversation — so you can revisit or copy from a session later, not just its text
+- The agent now *does* things, not just answers: say "Aral, start notes", "Aral, start conversation", "Aral, support" (any persona name), or "Aral, stop" during dictation and the app acts on it instead of typing it out. A command has to be the whole utterance — "Aral, start notes with the following headings" is still a question for the agent, and ordinary dictation like "let's start a conversation about the roadmap" is untouched. Commands are listed in Settings → Agent
+- New Notes: mic-only capture in the Conversation window — pick "Take Note" from its persona dropdown instead of a persona. Start, pause (mic stops being captured entirely, not just skipped by silence detection), resume, and keep talking across as many pauses as you like, all as one note. From History, run an opt-in AI Markdown cleanup pass on a note, edit its text inline, or resume capture into it later with "Append Dictation"
+
+### How it works
+
+- Runs entirely on Groq: `whisper-large-v3-turbo` for transcription; suggestions use whatever provider/model you pick for them — one Groq key covers transcription, no other provider is required unless you want a different model for suggestions
+- The two sides are captured as genuinely separate audio channels — your microphone, and a system-audio loopback of whatever the call app plays through your speakers — rather than being split apart after the fact
+- Each channel is chunked on pauses in speech (not on a timer), so a finished chunk from the other side is itself the "their turn ended" signal used for automatic suggestions
+- If you're on speakers rather than headphones, a "me" chunk that closely matches what loopback just captured is treated as your mic picking up the call audio and dropped, instead of showing a duplicated line
+
+### Known limitations
+
+- Windows only, and only for calls where the other person's audio comes through your speakers (Zoom/Teams/Meet-style). In-person multi-person meetings are not supported in this release
+- The speaker-echo filter drops the whole matching utterance, not just the echoed part — if you start replying with no pause right after leaked audio, that reply can be dropped along with it. Headphones avoid this entirely
+- Translated strings for this feature are English-only in this release; the other 8 languages show English placeholders for these specific strings until localized
+- Recording another person is regulated in many places — a consent prompt appears before a conversation starts, but you're responsible for actually having that consent
+
+### Fixes
+
+- The Conversation window's capability wasn't registered for that window, so it silently had no permission to drag-move, minimize, close, or receive any live event — it could only resize, and would sit on "Listening…" forever even though transcription was running, because the events carrying transcript/suggestions/errors never reached it. The window can now be moved, minimized, and closed normally, and transcript/suggestions arrive live
+- Fixed transcription and notes appearing to stop after the first sentence or two even while still talking: the live-event listeners were re-registered on every incoming utterance (because the toast callback passed in had a new identity each render), and an event landing during that async re-registration gap was silently dropped. Listener wiring is now stable across renders regardless of what the caller passes for `onToast`
+- Added a pin toggle to the Conversation window's titlebar to drop always-on-top once it's positioned where you want it, without closing it
+- Refreshed the Groq model list: four of the six models offered for enhancement and conversation suggestions had already been shut down by Groq (LLaMA 3.1 8B and LLaMA 3.3 70B on 2026-08-16, Qwen3 32B and LLaMA 4 Scout on 2026-07-17), so choosing one produced an API error rather than degrading gracefully. The list is now GPT-OSS 120B, GPT-OSS 20B, and Qwen3.6 27B (preview), and any setting still pointing at a retired model is migrated to Groq's own recommended replacement on next launch
+- Voice commands now survive the wake word being misheard. Real captures came back as "Aro Start notes" and "Aral Ahral Start Notes" — no comma, name mangled or stuttered — none of which matched. The name is now matched loosely (small edit distance, repeated leading mentions stripped), which stays safe because everything after it must still be exactly a command and nothing else
+- An install carrying the pre-rename agent name kept it after the rename to Aral. Voice commands key off that exact name, so they silently did nothing; the old default is now migrated on load
+
+### Internal
+
+- Renamed the app from Whisperi to Aral throughout: window titles, installer/product name, Settings title, About, tray tooltip, and the default agent name for new installs
+- Adds `conversations`, `conversation_utterances`, `conversation_suggestions` tables (migration v3)
+- Adds a second dual-stream audio capture path (`audio/conversation.rs`) alongside the existing single-stream dictation recorder, sharing its resample/WAV-encode/silence-detection helpers
+- Adds a third app window (`conversation`) — resizable, always-on-top, decorations-off with a custom titlebar matching Settings — separate from the fixed 100×100 overlay and the main Settings window
+- `conversation-started`/`conversation-stopped` events broadcast to every window so state stays consistent regardless of which window started or stopped a conversation
+- Adds `audio_path` (transcriptions) and `audio_path_me`/`audio_path_them` (conversations) columns (migration v4); audio is written to `{app_data}/recordings/` in the background so saving a transcript never blocks on disk I/O
+- Conversation audio is streamed to its per-channel WAV file chunk-by-chunk as the call runs, rather than buffered in memory, and finalized (header patched) on stop or app exit
+- Adds a `notes` table (migration v5) and a separate mic-only capture path (`audio/note_capture.rs`) with an explicit pause flag checked in the audio callback — paused audio never reaches the VAD or gets transcribed, rather than relying on silence detection to skip it
+- "Append Dictation" resuming a previously-stopped note starts a new audio segment file rather than appending to the old one (hound can't append to an existing WAV without rewriting its header); `notes.audio_path` therefore points at only the most recent capture session — a known limitation, documented in `NoteAudioArchive`
+
 ## [0.8.7] - 2026-08-15
 
 ### Highlights

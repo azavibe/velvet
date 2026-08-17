@@ -14,6 +14,8 @@ import {
 } from "@/services/tauriApi";
 import type { EnhancementIntensity } from "@/config/prompts";
 import type { DictionaryEntry } from "@/models/dictionary";
+import { DEFAULT_PERSONAS, type Persona } from "@/models/persona";
+import { replaceIfDeprecated } from "@/models/deprecatedModels";
 
 export interface Settings {
   // Transcription
@@ -63,6 +65,25 @@ export interface Settings {
   agentName: string;
   agentAliases: string[];
 
+  // Conversations (live call copilot)
+  personas: Persona[];
+  activePersonaId: string;
+  /** "auto" fires a suggestion whenever the other side stops talking;
+   *  "hotkey" only fires on demand. Reuses the dictation hotkey — pressing
+   *  it during an active conversation triggers a suggestion instead of
+   *  starting dictation, since the two never happen at the same time. */
+  conversationTriggerMode: "auto" | "hotkey";
+  /** Microphone device for conversation capture. Empty = system default.
+   *  Kept separate from `selectedMicDeviceId` (dictation) since a call may
+   *  reasonably use a different input than everyday dictation. */
+  conversationMicDeviceId: string;
+  /** Reasoning model for conversation suggestions — deliberately independent
+   *  of `reasoningProvider`/`reasoningModel` (dictation's AI enhancement).
+   *  Turning enhancement off shouldn't take away the ability to pick a
+   *  (possibly pricier) model for live suggestions. */
+  conversationReasoningProvider: string;
+  conversationReasoningModel: string;
+
   // Developer
   debugMode: boolean;
 
@@ -78,6 +99,10 @@ export interface Settings {
   qwenApiKey: string;
   openrouterApiKey: string;
 }
+
+/** The agent name shipped as the default before the app was renamed to
+ *  Aral — see the migration in `load()`. */
+const LEGACY_AGENT_NAME = "Whisperi";
 
 const DEFAULTS: Settings = {
   preferredLanguage: "auto",
@@ -102,8 +127,14 @@ const DEFAULTS: Settings = {
   liveEnhancement: true,
   liveLastError: "",
   selectedMicDeviceId: "",
-  agentName: "Whisperi",
+  agentName: "Aral",
   agentAliases: [],
+  personas: DEFAULT_PERSONAS,
+  activePersonaId: DEFAULT_PERSONAS[0].id,
+  conversationTriggerMode: "auto",
+  conversationMicDeviceId: "",
+  conversationReasoningProvider: "openai",
+  conversationReasoningModel: "gpt-5-mini",
   debugMode: false,
   uiLanguage: "",  // Empty string = auto-detect
   openaiApiKey: "",
@@ -124,6 +155,8 @@ const STORE_KEYS = [
   "useCustomPrompt", "customSystemPrompt",
   "autoPaste", "soundEnabled", "dictationKey", "activationMode",
   "selectedMicDeviceId", "debugMode", "uiLanguage",
+  "personas", "activePersonaId", "conversationTriggerMode", "conversationMicDeviceId",
+  "conversationReasoningProvider", "conversationReasoningModel",
 ] as const satisfies readonly (keyof Settings)[];
 
 const API_PROVIDERS = ["openai", "anthropic", "gemini", "groq", "mistral", "qwen", "openrouter"] as const;
@@ -178,8 +211,41 @@ export function useSettings() {
         resolved.secondaryLanguage = "en-US";
         setSetting("secondaryLanguage", "en-US");
       }
+      // Migration: installs that already saved a personas list (from testing
+      // before "Meeting" existed) won't pick up new defaults automatically —
+      // only truly missing settings get backfilled. Add it once if absent.
+      if (
+        Array.isArray(resolved.personas) &&
+        !resolved.personas.some((p) => p.id === "meeting")
+      ) {
+        const meeting = DEFAULT_PERSONAS.find((p) => p.id === "meeting");
+        if (meeting) {
+          resolved.personas = [meeting, ...resolved.personas];
+          setSetting("personas", resolved.personas);
+        }
+      }
+
+      // Migration: providers retire models, and a stored id pointing at a
+      // shut-down model fails the API call rather than degrading — the user
+      // just sees enhancement or suggestions stop working. Remap to the
+      // provider's own recommended replacement.
+      for (const key of ["reasoningModel", "conversationReasoningModel"] as const) {
+        const replacement = replaceIfDeprecated(resolved[key]);
+        if (replacement !== resolved[key]) {
+          resolved[key] = replacement;
+          setSetting(key, replacement);
+        }
+      }
 
       resolved.agentName = agentNameVal;
+      // Migration: the app was renamed Whisperi → Aral, but only the default
+      // changed — an install that had the old name persisted would keep
+      // addressing an agent by the old app's name. Voice commands key off
+      // this exact name, so a stale value makes them silently do nothing.
+      if (resolved.agentName === LEGACY_AGENT_NAME) {
+        resolved.agentName = DEFAULTS.agentName;
+        setAgentNameApi(DEFAULTS.agentName);
+      }
       resolved.agentAliases = agentAliases;
       resolved.customDictionary = customDictionary;
       API_PROVIDERS.forEach((provider, i) => {

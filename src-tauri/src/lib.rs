@@ -154,6 +154,21 @@ pub fn run() {
             // Initialize audio recording state
             app.manage(audio::RecordingState::new());
 
+            // Conversations feature: dual-channel (mic + loopback) capture
+            // state. Wrapped in Arc so the chunk-consumer task spawned in
+            // start_conversation can hold a handle across await points,
+            // same as LiveSessionState below.
+            app.manage(std::sync::Arc::new(audio::conversation::ConversationState::new()));
+
+            // History & Analytics: per-channel WAV writers for the
+            // currently-running conversation's audio archive.
+            app.manage(crate::commands::conversation::ConversationAudioArchive::default());
+
+            // Notes feature: mic-only capture with pause/resume, mirroring
+            // ConversationState's Arc-wrapping for the same reason.
+            app.manage(std::sync::Arc::new(audio::note_capture::NoteCaptureState::new()));
+            app.manage(crate::commands::notes::NoteAudioArchive::default());
+
             // Initialize live dictation session state. Wrap in Arc so the
             // audio-pump task spawned in start_live_session can clone a handle
             // for self-cleanup on exit (preventing HashMap leaks when a WS
@@ -201,7 +216,7 @@ pub fn run() {
 
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("Whisperi")
+                .tooltip("Aral")
                 .menu(&menu)
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "show" => {
@@ -252,6 +267,8 @@ pub fn run() {
             commands::database::get_stats,
             commands::app::quit_app,
             commands::app::show_settings,
+            commands::app::show_conversation_window,
+            commands::app::hide_conversation_window,
             commands::changelog::read_changelog,
             commands::live::start_live_session,
             commands::live::stop_live_session,
@@ -261,6 +278,28 @@ pub fn run() {
             commands::live::get_foreground_window,
             commands::live::get_foreground_window_class,
             commands::live::get_focus_target,
+            commands::conversation::start_conversation,
+            commands::conversation::stop_conversation,
+            commands::conversation::get_conversation_audio_levels,
+            commands::conversation::is_conversation_active,
+            commands::conversation::get_conversation_error,
+            commands::conversation::list_conversations,
+            commands::conversation::get_conversation,
+            commands::conversation::delete_conversation,
+            commands::conversation::generate_suggestion,
+            commands::notes::start_note_capture,
+            commands::notes::pause_note_capture,
+            commands::notes::resume_note_capture,
+            commands::notes::stop_note_capture,
+            commands::notes::is_note_capture_active,
+            commands::notes::is_note_capture_paused,
+            commands::notes::get_note_capture_error,
+            commands::notes::list_notes,
+            commands::notes::get_note,
+            commands::notes::set_note_title,
+            commands::notes::update_note,
+            commands::notes::delete_note,
+            commands::notes::cleanup_note,
         ])
         .build(tauri::generate_context!())
         .expect("error while building whisperi")
@@ -281,6 +320,29 @@ pub fn run() {
                 tauri::async_runtime::block_on(
                     sessions.shutdown(std::time::Duration::from_millis(1500)),
                 );
+
+                // Best-effort: stop an active conversation capture too, so its
+                // mic/loopback threads exit cleanly instead of being torn down
+                // mid-stream by process exit. A no-op when no conversation is
+                // active (stop() then just returns AudioError::NotRecording).
+                let conv_state = app_handle
+                    .state::<std::sync::Arc<crate::audio::conversation::ConversationState>>()
+                    .inner()
+                    .clone();
+                let _ = crate::audio::conversation::ConversationCapture::stop(&conv_state);
+                app_handle
+                    .state::<crate::commands::conversation::ConversationAudioArchive>()
+                    .finalize();
+
+                // Same for an active note capture.
+                let note_state = app_handle
+                    .state::<std::sync::Arc<crate::audio::note_capture::NoteCaptureState>>()
+                    .inner()
+                    .clone();
+                let _ = crate::audio::note_capture::NoteCapture::stop(&note_state);
+                app_handle
+                    .state::<crate::commands::notes::NoteAudioArchive>()
+                    .finalize();
             }
         });
 }
