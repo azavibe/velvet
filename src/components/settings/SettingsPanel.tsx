@@ -19,6 +19,7 @@ import {
 import { useSettings } from "@/hooks/useSettings";
 import { ToastProvider, useToast } from "@/components/ui/Toast";
 import { readChangelog, getSetting, setSetting } from "@/services/tauriApi";
+import { whatsNewReleaseKey } from "@/config/whatsNew";
 import WhatsNewModal from "@/components/ui/WhatsNewModal";
 import MicWarningModal from "@/components/ui/MicWarningModal";
 import GeneralSection from "./GeneralSection";
@@ -54,11 +55,6 @@ const SECTION_DEFS = [
   { id: "about" as Section, labelKey: "nav.about" as const, icon: Info },
 ];
 
-// Increment when release notes are materially revised without changing the
-// application version. The composite key makes the updated notes appear once
-// for users who already dismissed an earlier 0.8.8 changelog.
-const WHATS_NEW_REVISION = "2026-08-24";
-
 function SettingsPanelInner() {
   const [section, setSection] = useState<Section>("general");
   const [updateAvailable, setUpdateAvailable] = useState(false);
@@ -88,7 +84,7 @@ function SettingsPanelInner() {
           getVersion(),
           getSetting<string>("lastWhatsNewRelease"),
         ]);
-        const currentRelease = `${currentVersion}:${WHATS_NEW_REVISION}`;
+        const currentRelease = whatsNewReleaseKey(currentVersion);
         const isDev = import.meta.env.DEV;
         if (!isDev && lastWhatsNewRelease === currentRelease) {
           whatsNewChecked.current = true;
@@ -220,7 +216,7 @@ function SettingsPanelInner() {
               setSetting("lastWhatsNewVersion", whatsNew.version),
               setSetting(
                 "lastWhatsNewRelease",
-                `${whatsNew.version}:${WHATS_NEW_REVISION}`,
+                whatsNewReleaseKey(whatsNew.version),
               ),
             ]);
             setWhatsNew(null);

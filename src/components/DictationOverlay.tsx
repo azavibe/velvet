@@ -13,6 +13,7 @@ import { useHotkey } from "@/hooks/useHotkey";
 import { useConversation } from "@/hooks/useConversation";
 import { LoadingDots } from "@/components/ui/LoadingDots";
 import { getOverlayMotionMode, getOverlayVisualPhase } from "@/components/overlayState";
+import { whatsNewReleaseKey } from "@/config/whatsNew";
 import {
   showSettings,
   showConversationWindow,
@@ -142,10 +143,11 @@ function DictationOverlayInner() {
     }
     (async () => {
       try {
-        const [currentVersion, lastSeen, openAfterUpdate] = await Promise.all([
+        const [currentVersion, lastSeen, openAfterUpdate, lastWhatsNewRelease] = await Promise.all([
           getVersion(),
           getSetting<string>("lastSeenVersion"),
           getSetting<boolean>("openSettingsAfterUpdate"),
+          getSetting<string>("lastWhatsNewRelease"),
         ]);
         let needsSettings = false;
         const isDev = import.meta.env.DEV;
@@ -155,6 +157,9 @@ function DictationOverlayInner() {
         }
         if (openAfterUpdate) {
           setSetting("openSettingsAfterUpdate", false);
+          needsSettings = true;
+        }
+        if (lastWhatsNewRelease !== whatsNewReleaseKey(currentVersion)) {
           needsSettings = true;
         }
         if (needsSettings) showSettings();
