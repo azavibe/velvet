@@ -311,7 +311,9 @@ mod tests {
 
     #[test]
     fn is_half_width_punct_rejects_others() {
-        for c in ['a', '1', ' ', '，', '。', '？', '！', '：', '；', '\'', '"', '-'] {
+        for c in [
+            'a', '1', ' ', '，', '。', '？', '！', '：', '；', '\'', '"', '-',
+        ] {
             assert!(!is_half_width_punct(c), "should not recognize {:?}", c);
         }
     }
@@ -423,10 +425,7 @@ mod tests {
 
     #[test]
     fn normalize_chinese_semicolon() {
-        assert_eq!(
-            normalize_cjk_punctuation("第一个;第二个"),
-            "第一个；第二个"
-        );
+        assert_eq!(normalize_cjk_punctuation("第一个;第二个"), "第一个；第二个");
     }
 
     #[test]
@@ -489,10 +488,7 @@ mod tests {
 
     #[test]
     fn ellipsis_does_not_break_period_normalization() {
-        assert_eq!(
-            normalize_cjk_punctuation("今天.....完."),
-            "今天……完。"
-        );
+        assert_eq!(normalize_cjk_punctuation("今天.....完."), "今天……完。");
     }
 
     #[test]
@@ -502,10 +498,7 @@ mod tests {
 
     #[test]
     fn edge_decimal_in_chinese_context_unchanged() {
-        assert_eq!(
-            normalize_cjk_punctuation("今天3.14米长"),
-            "今天3.14米长"
-        );
+        assert_eq!(normalize_cjk_punctuation("今天3.14米长"), "今天3.14米长");
     }
 
     #[test]
@@ -547,19 +540,13 @@ mod tests {
             normalize_cjk_punctuation("打开config.json看看"),
             "打开config.json看看"
         );
-        assert_eq!(
-            normalize_cjk_punctuation("视频.mp4很大"),
-            "视频.mp4很大"
-        );
+        assert_eq!(normalize_cjk_punctuation("视频.mp4很大"), "视频.mp4很大");
     }
 
     #[test]
     fn edge_english_abbreviation_unchanged() {
         assert_eq!(normalize_cjk_punctuation("e.g."), "e.g.");
-        assert_eq!(
-            normalize_cjk_punctuation("Mr.王在办公室"),
-            "Mr.王在办公室"
-        );
+        assert_eq!(normalize_cjk_punctuation("Mr.王在办公室"), "Mr.王在办公室");
     }
 
     #[test]
@@ -572,10 +559,7 @@ mod tests {
 
     #[test]
     fn edge_mixed_english_then_chinese_unchanged() {
-        assert_eq!(
-            normalize_cjk_punctuation("hello, 你好"),
-            "hello, 你好"
-        );
+        assert_eq!(normalize_cjk_punctuation("hello, 你好"), "hello, 你好");
     }
 
     #[test]

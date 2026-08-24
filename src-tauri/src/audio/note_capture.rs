@@ -24,7 +24,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::recorder::{AudioError, TARGET_SAMPLE_RATE, encode_wav, is_speechless, negotiate_config, resample};
+use super::recorder::{
+    AudioError, TARGET_SAMPLE_RATE, encode_wav, is_speechless, negotiate_config, resample,
+};
 
 const SILENCE_HANGOVER_MS: u64 = 700;
 const MAX_CHUNK_MS: u64 = 20_000;
@@ -197,7 +199,10 @@ impl NoteCaptureState {
 pub struct NoteCapture;
 
 impl NoteCapture {
-    pub fn start(state: &NoteCaptureState, mic_device_id: Option<String>) -> Result<(), AudioError> {
+    pub fn start(
+        state: &NoteCaptureState,
+        mic_device_id: Option<String>,
+    ) -> Result<(), AudioError> {
         if state.is_active.swap(true, Ordering::SeqCst) {
             return Err(AudioError::AlreadyRecording);
         }
@@ -341,7 +346,16 @@ fn build_capture_stream(
 ) -> Result<cpal::Stream, AudioError> {
     macro_rules! build {
         ($t:ty) => {
-            build_capture_stream_typed::<$t>(device, config, channels, sample_rate, accumulator, level, tx, is_paused)
+            build_capture_stream_typed::<$t>(
+                device,
+                config,
+                channels,
+                sample_rate,
+                accumulator,
+                level,
+                tx,
+                is_paused,
+            )
         };
     }
     match sample_format {
@@ -355,7 +369,10 @@ fn build_capture_stream(
         SampleFormat::I64 => build!(i64),
         SampleFormat::U64 => build!(u64),
         SampleFormat::F64 => build!(f64),
-        _ => Err(AudioError::ConfigError(format!("Unsupported sample format: {:?}", sample_format))),
+        _ => Err(AudioError::ConfigError(format!(
+            "Unsupported sample format: {:?}",
+            sample_format
+        ))),
     }
 }
 
@@ -390,8 +407,11 @@ where
                 let mut mono = Vec::with_capacity(data.len() / channels.max(1));
                 let mut peak: f32 = 0.0;
                 for frame in data.chunks(channels.max(1)) {
-                    let sample: f32 =
-                        frame.iter().map(|s| <f32 as cpal::Sample>::from_sample(*s)).sum::<f32>() / channels.max(1) as f32;
+                    let sample: f32 = frame
+                        .iter()
+                        .map(|s| <f32 as cpal::Sample>::from_sample(*s))
+                        .sum::<f32>()
+                        / channels.max(1) as f32;
                     mono.push(sample);
                     peak = peak.max(sample.abs());
                 }
@@ -464,7 +484,10 @@ mod tests {
                 break;
             }
         }
-        assert!(result.is_none(), "sub-minimum blip should be dropped, not finalized");
+        assert!(
+            result.is_none(),
+            "sub-minimum blip should be dropped, not finalized"
+        );
     }
 
     #[test]

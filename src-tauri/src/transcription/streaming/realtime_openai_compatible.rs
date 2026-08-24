@@ -18,7 +18,7 @@ use tokio_tungstenite::{
 
 use super::providers::{AuthScheme, ProviderConfig, VadMode};
 use super::reorder::ReorderBuffer;
-use super::{SessionConfig, StreamingEvent, StreamingTranscriber, ErrorKind};
+use super::{ErrorKind, SessionConfig, StreamingEvent, StreamingTranscriber};
 use std::collections::VecDeque;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -85,7 +85,10 @@ impl RealtimeOpenAiCompatibleClient {
         if let Some(evt) = self.ready.pop_front() {
             return Ok(Some(evt));
         }
-        let source = self.source.as_mut().ok_or_else(|| anyhow!("not connected"))?;
+        let source = self
+            .source
+            .as_mut()
+            .ok_or_else(|| anyhow!("not connected"))?;
         let Some(msg) = source.next().await else {
             return Err(anyhow!("websocket closed"));
         };
@@ -121,15 +124,16 @@ impl RealtimeOpenAiCompatibleClient {
                 self.reorder.observe(&item_id);
                 Ok(None)
             }
-            WireEvent::Completed { item_id, transcript } => {
+            WireEvent::Completed {
+                item_id,
+                transcript,
+            } => {
                 let released = self.ingest_completed(&item_id, transcript);
                 let events = self.wrap_completed(released);
                 self.ready.extend(events);
                 Ok(self.ready.pop_front())
             }
-            WireEvent::Error { message, kind } => {
-                Ok(Some(StreamingEvent::Error { message, kind }))
-            }
+            WireEvent::Error { message, kind } => Ok(Some(StreamingEvent::Error { message, kind })),
             WireEvent::Ignored => Ok(None),
         }
     }
@@ -199,16 +203,26 @@ impl RealtimeOpenAiCompatibleClient {
 enum WireEvent {
     /// An utterance's audio segment was committed, or speech started — the
     /// capture-order ranking signal, carrying the provider's `item_id`.
-    Committed { item_id: String },
+    Committed {
+        item_id: String,
+    },
     /// A transcription finished. `transcript` may be empty (silence/noise).
-    Completed { item_id: String, transcript: String },
-    Error { message: String, kind: ErrorKind },
+    Completed {
+        item_id: String,
+        transcript: String,
+    },
+    Error {
+        message: String,
+        kind: ErrorKind,
+    },
     /// A message we don't act on (session.created, deltas, pings, …).
     Ignored,
 }
 
 fn item_id_of(v: &Value) -> Option<String> {
-    v.get("item_id").and_then(|i| i.as_str()).map(str::to_string)
+    v.get("item_id")
+        .and_then(|i| i.as_str())
+        .map(str::to_string)
 }
 
 /// Decode a single (already-parsed) provider message into a [`WireEvent`]. Pure
@@ -491,9 +505,7 @@ mod tests {
         )
         .unwrap();
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-        let transcription = value
-            .pointer("/session/audio/input/transcription")
-            .unwrap();
+        let transcription = value.pointer("/session/audio/input/transcription").unwrap();
         assert_eq!(transcription["language"], "en");
         assert_eq!(
             transcription["prompt"],
@@ -513,9 +525,7 @@ mod tests {
         )
         .unwrap();
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-        let transcription = value
-            .pointer("/session/input_audio_transcription")
-            .unwrap();
+        let transcription = value.pointer("/session/input_audio_transcription").unwrap();
         assert!(transcription.get("language").is_none());
         assert!(transcription.get("prompt").is_none());
     }
@@ -540,7 +550,8 @@ mod tests {
         // A full timeout after the ORIGINAL block must NOT skip rank 1: its clock
         // restarted when the head advanced.
         assert!(
-            c.check_reorder_timeout(t0 + REORDER_HEAD_TIMEOUT).is_empty(),
+            c.check_reorder_timeout(t0 + REORDER_HEAD_TIMEOUT)
+                .is_empty(),
             "rank 1's timer must restart on head advance, not inherit rank 0's clock",
         );
         // It DOES fire a full timeout measured from the head advance (rank 1
@@ -558,7 +569,10 @@ mod tests {
     fn parse_event_completed_carries_item_id_and_transcript() {
         let json = r#"{"type":"conversation.item.input_audio_transcription.completed","item_id":"itm_1","transcript":"hello world"}"#;
         match parse(json) {
-            WireEvent::Completed { item_id, transcript } => {
+            WireEvent::Completed {
+                item_id,
+                transcript,
+            } => {
                 assert_eq!(item_id, "itm_1");
                 assert_eq!(transcript, "hello world");
             }
@@ -600,7 +614,10 @@ mod tests {
     fn parse_event_classifies_auth_error() {
         let json = r#"{"type":"error","error":{"message":"invalid key","code":"invalid_api_key"}}"#;
         match parse(json) {
-            WireEvent::Error { kind: ErrorKind::AuthFailed, .. } => {}
+            WireEvent::Error {
+                kind: ErrorKind::AuthFailed,
+                ..
+            } => {}
             e => panic!("wrong variant: {:?}", e),
         }
     }
@@ -621,7 +638,9 @@ mod tests {
         assert_eq!(v["type"], "input_audio_buffer.append");
         assert!(v["event_id"].as_str().unwrap().len() > 0);
         let b64 = v["audio"].as_str().unwrap();
-        let decoded = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .unwrap();
         assert_eq!(decoded.len(), samples.len() * 2);
         // Little-endian i16
         assert_eq!(decoded[0], 0);

@@ -2,15 +2,64 @@ pub mod migrations;
 pub mod word_count;
 
 use anyhow::{Context, Result};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use std::sync::Mutex;
-use tauri::AppHandle;
-use tauri::Manager;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Emitter, Manager};
 
+use crate::audio::archive::{self, ArchiveFailure};
+
+#[derive(Clone)]
 pub struct Database {
-    conn: Mutex<Connection>,
+    conn: Arc<Mutex<Connection>>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AudioAssetStatus {
+    Saving,
+    Ready,
+    Missing,
+    Failed,
+}
+
+impl AudioAssetStatus {
+    fn from_db(value: &str) -> Self {
+        match value {
+            "saving" => Self::Saving,
+            "ready" => Self::Ready,
+            "missing" => Self::Missing,
+            "failed" => Self::Failed,
+            _ => Self::Failed,
+        }
+    }
+
+    fn as_db(self) -> &'static str {
+        match self {
+            Self::Saving => "saving",
+            Self::Ready => "ready",
+            Self::Missing => "missing",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AudioAsset {
+    pub id: i64,
+    pub owner_type: String,
+    pub owner_id: i64,
+    pub channel: String,
+    pub sequence: i64,
+    pub status: AudioAssetStatus,
+    /// Only ready assets expose a path. The database may retain a path for
+    /// recovery/deletion while an asset is saving or has failed.
+    pub path: Option<String>,
+    pub byte_length: Option<i64>,
+    pub duration_ms: Option<i64>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,11 +74,10 @@ pub struct Transcription {
     pub error: Option<String>,
     pub duration_ms: Option<i64>,
     pub word_count: Option<i64>,
-    /// Local WAV file, if the recording was archived to disk. Set by a
-    /// background write shortly after the row is created (see
-    /// `update_transcription_audio_path`), so a just-saved row can briefly
-    /// have this as `None`.
+    /// Compatibility path for the next History milestone. It is only
+    /// populated when `audio_asset` is ready.
     pub audio_path: Option<String>,
+    pub audio_asset: Option<AudioAsset>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -48,6 +96,17 @@ pub struct StatsPayload {
     pub avg_words: f64,
 }
 
+/// Privacy-safe summary of the one-time archive recovery pass. Paths and
+/// user content are intentionally excluded from the report.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AudioRecoveryReport {
+    pub checked: u64,
+    pub saving: u64,
+    pub ready: u64,
+    pub missing: u64,
+    pub failed: u64,
+}
+
 /// Summary row for the Conversations history list — no utterances/suggestions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationSummary {
@@ -56,11 +115,12 @@ pub struct ConversationSummary {
     pub ended_at: Option<String>,
     pub title: Option<String>,
     pub persona_name: Option<String>,
-    /// Local WAV files for each channel, if archived (see
-    /// `update_conversation_audio_paths`). Either can be `None` if that
-    /// channel never captured any audio during the call.
+    /// Compatibility paths for the next History milestone. They are only
+    /// populated when the matching asset is ready.
     pub audio_path_me: Option<String>,
     pub audio_path_them: Option<String>,
+    pub audio_asset_me: Option<AudioAsset>,
+    pub audio_asset_them: Option<AudioAsset>,
     /// First utterance's text, for a collapsed-card preview without
     /// fetching the full transcript. `None` for a conversation with no
     /// utterances (e.g. started and immediately stopped).
@@ -109,14 +169,21 @@ pub struct Note {
     pub raw_transcript: String,
     pub body_markdown: Option<String>,
     pub audio_path: Option<String>,
+    /// Every recorded append segment, ordered by capture sequence.
+    pub audio_segments: Vec<AudioAsset>,
     pub tags: Vec<String>,
 }
 
 /// Initialize the database and store it in Tauri's managed state
 pub fn init(app: &AppHandle) -> Result<()> {
+    #[cfg(debug_assertions)]
+    let started = std::time::Instant::now();
     let db_path = get_db_path(app)?;
     let conn = Connection::open(&db_path)
         .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
+
+    #[cfg(debug_assertions)]
+    log::info!("[startup] database opened");
 
     // Required for `ON DELETE CASCADE` on conversation_utterances/conversation_suggestions
     // (v3 migration) to actually cascade — SQLite ignores FK constraints unless this
@@ -125,9 +192,57 @@ pub fn init(app: &AppHandle) -> Result<()> {
 
     migrations::run(&conn)?;
 
-    app.manage(Database {
-        conn: Mutex::new(conn),
+    #[cfg(debug_assertions)]
+    log::info!(
+        "[startup] database migrations complete elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
+
+    let recordings_dir = app.path().app_data_dir()?.join("recordings");
+    std::fs::create_dir_all(&recordings_dir)?;
+    let database = Database {
+        conn: Arc::new(Mutex::new(conn)),
+    };
+    app.manage(database.clone());
+
+    // Migrations and directory creation are required before the UI can use
+    // the database. Full WAV validation is not: rows remain explicitly
+    // saving/missing/failed until this bounded recovery pass finishes, while
+    // the recording protocol validates a requested ready asset again.
+    let recovery_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(debug_assertions)]
+        let recovery_started = std::time::Instant::now();
+        #[cfg(debug_assertions)]
+        log::info!("[startup] audio recovery started");
+
+        match database.reconcile_audio_assets(&recordings_dir, true) {
+            Ok(report) => {
+                #[cfg(debug_assertions)]
+                log::info!(
+                    "[startup] audio recovery complete checked={} saving={} ready={} missing={} failed={} elapsed_ms={}",
+                    report.checked,
+                    report.saving,
+                    report.ready,
+                    report.missing,
+                    report.failed,
+                    recovery_started.elapsed().as_millis()
+                );
+                let _ = recovery_app.emit("audio-recovery-complete", report);
+            }
+            Err(_) => {
+                #[cfg(debug_assertions)]
+                log::info!(
+                    "[startup] audio recovery failed elapsed_ms={}",
+                    recovery_started.elapsed().as_millis()
+                );
+                let _ = recovery_app.emit("audio-recovery-failed", "audio_recovery_failed");
+            }
+        }
     });
+
+    #[cfg(debug_assertions)]
+    log::info!("[startup] database ready for UI");
 
     Ok(())
 }
@@ -144,13 +259,461 @@ fn get_db_path(app: &AppHandle) -> Result<PathBuf> {
 impl Database {
     /// Create an in-memory database with migrations applied. Test-only.
     #[cfg(test)]
-    fn new_in_memory() -> Result<Self> {
+    pub(crate) fn new_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         migrations::run(&conn)?;
         Ok(Database {
-            conn: Mutex::new(conn),
+            conn: Arc::new(Mutex::new(conn)),
         })
+    }
+
+    fn row_to_audio_asset(row: &rusqlite::Row<'_>) -> rusqlite::Result<AudioAsset> {
+        let raw_path: String = row.get(5)?;
+        let status = AudioAssetStatus::from_db(row.get::<_, String>(6)?.as_str());
+        Ok(AudioAsset {
+            id: row.get(0)?,
+            owner_type: row.get(1)?,
+            owner_id: row.get(2)?,
+            channel: row.get(3)?,
+            sequence: row.get(4)?,
+            path: (status == AudioAssetStatus::Ready && !raw_path.is_empty()).then_some(raw_path),
+            status,
+            byte_length: row.get(7)?,
+            duration_ms: row.get(8)?,
+            error: row.get(9)?,
+        })
+    }
+
+    /// Load one asset by its opaque database id for the recording protocol.
+    /// Paths remain hidden for non-ready assets and are revalidated by the
+    /// protocol before every request.
+    pub fn get_audio_asset(&self, asset_id: i64) -> Result<Option<AudioAsset>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, owner_type, owner_id, channel, sequence, path, status,
+                    byte_length, duration_ms, error
+             FROM audio_assets
+             WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query([asset_id])?;
+        rows.next()?
+            .map(Self::row_to_audio_asset)
+            .transpose()
+            .map_err(Into::into)
+    }
+
+    fn load_audio_asset_conn(
+        conn: &Connection,
+        owner_type: &str,
+        owner_id: i64,
+        channel: &str,
+    ) -> Result<Option<AudioAsset>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, owner_type, owner_id, channel, sequence, path, status,
+                    byte_length, duration_ms, error
+             FROM audio_assets
+             WHERE owner_type = ?1 AND owner_id = ?2 AND channel = ?3
+             ORDER BY sequence DESC, id DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query(rusqlite::params![owner_type, owner_id, channel])?;
+        rows.next()?
+            .map(Self::row_to_audio_asset)
+            .transpose()
+            .map_err(Into::into)
+    }
+
+    fn load_audio_assets_conn(
+        conn: &Connection,
+        owner_type: &str,
+        owner_id: i64,
+        channel: &str,
+    ) -> Result<Vec<AudioAsset>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, owner_type, owner_id, channel, sequence, path, status,
+                    byte_length, duration_ms, error
+             FROM audio_assets
+             WHERE owner_type = ?1 AND owner_id = ?2 AND channel = ?3
+             ORDER BY sequence ASC, id ASC",
+        )?;
+        let rows = stmt.query_map(
+            rusqlite::params![owner_type, owner_id, channel],
+            Self::row_to_audio_asset,
+        )?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    fn audio_paths_conn(conn: &Connection, owner_type: &str, owner_id: i64) -> Result<Vec<String>> {
+        let mut stmt = conn.prepare(
+            "SELECT path FROM audio_assets
+             WHERE owner_type = ?1 AND owner_id = ?2 AND path <> ''",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![owner_type, owner_id], |row| row.get(0))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    fn update_legacy_path_conn(
+        conn: &Connection,
+        owner_type: &str,
+        owner_id: i64,
+        channel: &str,
+    ) -> Result<()> {
+        let path: Option<String> = conn
+            .query_row(
+                "SELECT path FROM audio_assets
+                 WHERE owner_type = ?1 AND owner_id = ?2 AND channel = ?3
+                   AND status = 'ready' AND path <> ''
+                 ORDER BY sequence DESC, id DESC LIMIT 1",
+                rusqlite::params![owner_type, owner_id, channel],
+                |row| row.get(0),
+            )
+            .ok();
+
+        match (owner_type, channel) {
+            ("dictation", "main") => {
+                conn.execute(
+                    "UPDATE transcriptions SET audio_path = ?2 WHERE id = ?1",
+                    rusqlite::params![owner_id, path],
+                )?;
+            }
+            ("conversation", "me") => {
+                conn.execute(
+                    "UPDATE conversations SET audio_path_me = ?2 WHERE id = ?1",
+                    rusqlite::params![owner_id, path],
+                )?;
+            }
+            ("conversation", "them") => {
+                conn.execute(
+                    "UPDATE conversations SET audio_path_them = ?2 WHERE id = ?1",
+                    rusqlite::params![owner_id, path],
+                )?;
+            }
+            ("note", "main") => {
+                conn.execute(
+                    "UPDATE notes SET audio_path = ?2 WHERE id = ?1",
+                    rusqlite::params![owner_id, path],
+                )?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Create the durable `saving` row before any bytes are written. The
+    /// caller sets the final path before starting the file operation.
+    pub fn begin_audio_asset(
+        &self,
+        owner_type: &str,
+        owner_id: i64,
+        channel: &str,
+    ) -> Result<(i64, i64)> {
+        let conn = self.conn.lock().unwrap();
+        let owner_exists = match owner_type {
+            "dictation" => conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM transcriptions WHERE id = ?1)",
+                [owner_id],
+                |row| row.get::<_, bool>(0),
+            )?,
+            "conversation" => conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?1)",
+                [owner_id],
+                |row| row.get::<_, bool>(0),
+            )?,
+            "note" => conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM notes WHERE id = ?1)",
+                [owner_id],
+                |row| row.get::<_, bool>(0),
+            )?,
+            _ => false,
+        };
+        if !owner_exists {
+            anyhow::bail!("audio owner does not exist");
+        }
+        let sequence: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(sequence), -1) + 1
+             FROM audio_assets WHERE owner_type = ?1 AND owner_id = ?2 AND channel = ?3",
+            rusqlite::params![owner_type, owner_id, channel],
+            |row| row.get(0),
+        )?;
+        conn.execute(
+            "INSERT INTO audio_assets
+                (owner_type, owner_id, channel, sequence, status)
+             VALUES (?1, ?2, ?3, ?4, 'saving')",
+            rusqlite::params![owner_type, owner_id, channel, sequence],
+        )?;
+        Ok((conn.last_insert_rowid(), sequence))
+    }
+
+    pub fn set_audio_asset_path(&self, asset_id: i64, path: &Path) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE audio_assets SET path = ?2 WHERE id = ?1",
+            rusqlite::params![asset_id, path.to_string_lossy().as_ref()],
+        )?;
+        Ok(())
+    }
+
+    pub fn mark_audio_asset_ready(
+        &self,
+        asset_id: i64,
+        byte_length: i64,
+        duration_ms: i64,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let (owner_type, owner_id, channel): (String, i64, String) = conn.query_row(
+            "SELECT owner_type, owner_id, channel FROM audio_assets WHERE id = ?1",
+            [asset_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        conn.execute(
+            "UPDATE audio_assets
+             SET status = 'ready', byte_length = ?2, duration_ms = ?3, error = NULL
+             WHERE id = ?1",
+            rusqlite::params![asset_id, byte_length, duration_ms],
+        )?;
+        Self::update_legacy_path_conn(&conn, &owner_type, owner_id, &channel)?;
+        Ok(())
+    }
+
+    pub fn mark_audio_asset_failed(&self, asset_id: i64, error: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let (owner_type, owner_id, channel): (String, i64, String) = conn.query_row(
+            "SELECT owner_type, owner_id, channel FROM audio_assets WHERE id = ?1",
+            [asset_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        conn.execute(
+            "UPDATE audio_assets
+             SET status = 'failed', byte_length = NULL, duration_ms = NULL, error = ?2
+             WHERE id = ?1",
+            rusqlite::params![asset_id, error],
+        )?;
+        Self::update_legacy_path_conn(&conn, &owner_type, owner_id, &channel)?;
+        Ok(())
+    }
+
+    /// Make a ready asset's disappearance durable without deleting its row.
+    /// The stored path remains available to source-aware cleanup, while
+    /// History can report the missing state on its next refresh.
+    pub fn mark_audio_asset_missing(&self, asset_id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let (owner_type, owner_id, channel): (String, i64, String) = conn.query_row(
+            "SELECT owner_type, owner_id, channel FROM audio_assets WHERE id = ?1",
+            [asset_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        conn.execute(
+            "UPDATE audio_assets
+             SET status = 'missing', byte_length = NULL, duration_ms = NULL, error = 'file_missing'
+             WHERE id = ?1 AND status = 'ready'",
+            [asset_id],
+        )?;
+        Self::update_legacy_path_conn(&conn, &owner_type, owner_id, &channel)?;
+        Ok(())
+    }
+
+    fn set_audio_asset_status(
+        &self,
+        asset_id: i64,
+        expected_status: AudioAssetStatus,
+        status: AudioAssetStatus,
+        error: Option<&str>,
+        metadata: Option<archive::WavMetadata>,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let Some((owner_type, owner_id, channel)): Option<(String, i64, String)> = conn
+            .query_row(
+                "SELECT owner_type, owner_id, channel FROM audio_assets WHERE id = ?1",
+                [asset_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?
+        else {
+            // A source can be deleted while the recovery pass is validating
+            // its file. That is a successful no-op, not a failed recovery.
+            return Ok(false);
+        };
+        let (byte_length, duration_ms) = metadata
+            .map(|m| (Some(m.byte_length), Some(m.duration_ms)))
+            .unwrap_or((None, None));
+        let changed = conn.execute(
+            "UPDATE audio_assets
+             SET status = ?2, byte_length = ?3, duration_ms = ?4, error = ?5
+             WHERE id = ?1 AND status = ?6",
+            rusqlite::params![
+                asset_id,
+                status.as_db(),
+                byte_length,
+                duration_ms,
+                error,
+                expected_status.as_db(),
+            ],
+        )?;
+        if changed == 1 {
+            Self::update_legacy_path_conn(&conn, &owner_type, owner_id, &channel)?;
+        }
+        Ok(changed == 1)
+    }
+
+    /// Recover interrupted writes, validate legacy files, and downgrade
+    /// deleted/corrupt files. Filesystem work is performed without holding
+    /// the database mutex; each update is conditional on the status observed
+    /// in the snapshot so active writers cannot be overwritten by stale work.
+    pub fn reconcile_audio_assets(
+        &self,
+        recordings_root: &Path,
+        recover_interrupted: bool,
+    ) -> Result<AudioRecoveryReport> {
+        let assets = {
+            let conn = self.conn.lock().unwrap();
+            let mut stmt = conn.prepare(
+                "SELECT id, owner_type, owner_id, channel, path, status
+                 FROM audio_assets ORDER BY id ASC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let mut report = AudioRecoveryReport::default();
+
+        for (asset_id, _owner_type, _owner_id, _channel, raw_path, raw_status) in assets {
+            report.checked += 1;
+            let status = AudioAssetStatus::from_db(&raw_status);
+            if status == AudioAssetStatus::Failed {
+                report.failed += 1;
+                continue;
+            }
+
+            if raw_path.is_empty() {
+                if status == AudioAssetStatus::Saving && !recover_interrupted {
+                    report.saving += 1;
+                    continue;
+                }
+                let error = if status == AudioAssetStatus::Saving {
+                    ArchiveFailure::Interrupted.code()
+                } else {
+                    ArchiveFailure::InvalidPath.code()
+                };
+                if self.set_audio_asset_status(
+                    asset_id,
+                    status,
+                    AudioAssetStatus::Failed,
+                    Some(error),
+                    None,
+                )? {
+                    report.failed += 1;
+                }
+                continue;
+            }
+
+            let Some(path) = archive::validated_recording_path(recordings_root, &raw_path) else {
+                if self.set_audio_asset_status(
+                    asset_id,
+                    status,
+                    AudioAssetStatus::Failed,
+                    Some(ArchiveFailure::InvalidPath.code()),
+                    None,
+                )? {
+                    report.failed += 1;
+                }
+                continue;
+            };
+
+            if status == AudioAssetStatus::Saving {
+                let temp = archive::temp_path(&path);
+                if path.exists() {
+                    match archive::validate_wav_file(&path) {
+                        Ok(metadata) => {
+                            let _ = std::fs::remove_file(&temp);
+                            if self.set_audio_asset_status(
+                                asset_id,
+                                status,
+                                AudioAssetStatus::Ready,
+                                None,
+                                Some(metadata),
+                            )? {
+                                report.ready += 1;
+                            }
+                        }
+                        Err(error) => {
+                            let _ = std::fs::remove_file(&temp);
+                            if self.set_audio_asset_status(
+                                asset_id,
+                                status,
+                                AudioAssetStatus::Failed,
+                                Some(error.code()),
+                                None,
+                            )? {
+                                report.failed += 1;
+                            }
+                        }
+                    }
+                } else if recover_interrupted {
+                    let _ =
+                        archive::remove_recording_if_safe(recordings_root, &temp.to_string_lossy());
+                    if self.set_audio_asset_status(
+                        asset_id,
+                        status,
+                        AudioAssetStatus::Failed,
+                        Some(ArchiveFailure::Interrupted.code()),
+                        None,
+                    )? {
+                        report.failed += 1;
+                    }
+                } else {
+                    report.saving += 1;
+                }
+                continue;
+            }
+
+            if !path.exists() {
+                if self.set_audio_asset_status(
+                    asset_id,
+                    status,
+                    AudioAssetStatus::Missing,
+                    Some("file_missing"),
+                    None,
+                )? {
+                    report.missing += 1;
+                }
+                continue;
+            }
+
+            match archive::validate_wav_file(&path) {
+                Ok(metadata) => {
+                    let _ = std::fs::remove_file(archive::temp_path(&path));
+                    if self.set_audio_asset_status(
+                        asset_id,
+                        status,
+                        AudioAssetStatus::Ready,
+                        None,
+                        Some(metadata),
+                    )? {
+                        report.ready += 1;
+                    }
+                }
+                Err(error) => {
+                    if self.set_audio_asset_status(
+                        asset_id,
+                        status,
+                        AudioAssetStatus::Failed,
+                        Some(error.code()),
+                        None,
+                    )? {
+                        report.failed += 1;
+                    }
+                }
+            }
+        }
+        Ok(report)
     }
 
     pub fn save_transcription(
@@ -206,16 +769,25 @@ impl Database {
                 error: row.get(7)?,
                 duration_ms: row.get(8)?,
                 word_count: row.get(9)?,
-                audio_path: row.get(10)?,
+                audio_path: None,
+                audio_asset: None,
             })
         })?;
 
-        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        let mut transcriptions = rows.collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+        for transcription in &mut transcriptions {
+            let asset = Self::load_audio_asset_conn(&conn, "dictation", transcription.id, "main")?;
+            transcription.audio_path = asset.as_ref().and_then(|asset| asset.path.clone());
+            transcription.audio_asset = asset;
+        }
+        Ok(transcriptions)
     }
 
-    /// Set once a dictation's audio has been written to disk (the write
-    /// happens in a background task after the row is already saved, so
-    /// this is a follow-up UPDATE rather than part of the initial INSERT).
+    /// Compatibility-only setter for legacy callers. New archive code uses
+    /// `mark_audio_asset_ready`, which updates the state and this column
+    /// together.
+    #[allow(dead_code)]
     pub fn update_transcription_audio_path(&self, id: i64, path: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -225,33 +797,70 @@ impl Database {
         Ok(())
     }
 
-    /// Deletes the row and, best-effort, its archived audio file. A missing
-    /// or already-deleted file is not an error — the row is the source of
-    /// truth for whether the recording ever existed.
-    pub fn delete_transcription(&self, id: i64) -> Result<()> {
+    /// Deletes the row and every linked recording. Missing files are safe;
+    /// deletion is restricted to the validated recordings root.
+    pub fn delete_transcription(&self, id: i64, recordings_root: &Path) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        let audio_path: Option<String> = conn
-            .query_row("SELECT audio_path FROM transcriptions WHERE id = ?1", [id], |r| r.get(0))
+        let legacy_path: Option<String> = conn
+            .query_row(
+                "SELECT audio_path FROM transcriptions WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
             .ok();
-        conn.execute("DELETE FROM transcriptions WHERE id = ?1", [id])?;
-        if let Some(path) = audio_path.filter(|p| !p.is_empty()) {
-            let _ = std::fs::remove_file(path);
+        let mut paths = Self::audio_paths_conn(&conn, "dictation", id)?;
+        if let Some(path) = legacy_path {
+            paths.push(path);
         }
+        conn.execute("DELETE FROM transcriptions WHERE id = ?1", [id])?;
+        conn.execute(
+            "DELETE FROM audio_assets WHERE owner_type = 'dictation' AND owner_id = ?1",
+            [id],
+        )?;
+        drop(conn);
+        Self::remove_paths(recordings_root, paths);
         Ok(())
     }
 
-    pub fn clear_transcriptions(&self) -> Result<()> {
+    pub fn clear_transcriptions(&self, recordings_root: &Path) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        let paths: Vec<String> = {
-            let mut stmt = conn.prepare("SELECT audio_path FROM transcriptions WHERE audio_path IS NOT NULL")?;
+        let mut paths: Vec<String> = Vec::new();
+        {
+            let mut stmt =
+                conn.prepare("SELECT audio_path FROM transcriptions WHERE audio_path IS NOT NULL")?;
             let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-            rows.filter_map(|r| r.ok()).collect()
-        };
-        conn.execute("DELETE FROM transcriptions", [])?;
-        for path in paths {
-            let _ = std::fs::remove_file(path);
+            paths.extend(rows.filter_map(|r| r.ok()));
         }
+        {
+            let mut stmt = conn.prepare(
+                "SELECT path FROM audio_assets WHERE owner_type = 'dictation' AND path <> ''",
+            )?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            paths.extend(rows.filter_map(|r| r.ok()));
+        }
+        conn.execute("DELETE FROM transcriptions", [])?;
+        conn.execute(
+            "DELETE FROM audio_assets WHERE owner_type = 'dictation'",
+            [],
+        )?;
+        drop(conn);
+        Self::remove_paths(recordings_root, paths);
         Ok(())
+    }
+
+    fn remove_paths(recordings_root: &Path, paths: Vec<String>) {
+        if recordings_root.as_os_str().is_empty() {
+            return;
+        }
+        let mut unique = HashSet::new();
+        for path in paths {
+            if path.is_empty() || !unique.insert(path.clone()) {
+                continue;
+            }
+            let _ = archive::remove_recording_if_safe(recordings_root, &path);
+            let temp = archive::temp_path(Path::new(&path));
+            let _ = archive::remove_recording_if_safe(recordings_root, &temp.to_string_lossy());
+        }
     }
 
     pub fn get_stats(&self, period: StatsPeriod) -> Result<StatsPayload> {
@@ -383,7 +992,11 @@ impl Database {
     /// just-transcribed chunk on one channel is actually the other
     /// channel's audio bleeding into the microphone (speaker playback,
     /// not headphones).
-    pub fn get_recent_utterances(&self, conversation_id: i64, since_ms: i64) -> Result<Vec<ConversationUtterance>> {
+    pub fn get_recent_utterances(
+        &self,
+        conversation_id: i64,
+        since_ms: i64,
+    ) -> Result<Vec<ConversationUtterance>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, conversation_id, channel, started_at_ms, text
@@ -418,18 +1031,36 @@ impl Database {
                 ended_at: row.get(2)?,
                 title: row.get(3)?,
                 persona_name: row.get(4)?,
-                audio_path_me: row.get(5)?,
-                audio_path_them: row.get(6)?,
+                audio_path_me: None,
+                audio_path_them: None,
+                audio_asset_me: None,
+                audio_asset_them: None,
                 snippet: row.get(7)?,
             })
         })?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        let mut conversations = rows.collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+        for conversation in &mut conversations {
+            conversation.audio_asset_me =
+                Self::load_audio_asset_conn(&conn, "conversation", conversation.id, "me")?;
+            conversation.audio_asset_them =
+                Self::load_audio_asset_conn(&conn, "conversation", conversation.id, "them")?;
+            conversation.audio_path_me = conversation
+                .audio_asset_me
+                .as_ref()
+                .and_then(|asset| asset.path.clone());
+            conversation.audio_path_them = conversation
+                .audio_asset_them
+                .as_ref()
+                .and_then(|asset| asset.path.clone());
+        }
+        Ok(conversations)
     }
 
     pub fn get_conversation(&self, conversation_id: i64) -> Result<ConversationDetail> {
         let conn = self.conn.lock().unwrap();
 
-        let conversation = conn.query_row(
+        let mut conversation = conn.query_row(
             "SELECT c.id, c.started_at, c.ended_at, c.title, c.persona_name,
                     c.audio_path_me, c.audio_path_them,
                     (SELECT text FROM conversation_utterances u
@@ -443,12 +1074,27 @@ impl Database {
                     ended_at: row.get(2)?,
                     title: row.get(3)?,
                     persona_name: row.get(4)?,
-                    audio_path_me: row.get(5)?,
-                    audio_path_them: row.get(6)?,
+                    audio_path_me: None,
+                    audio_path_them: None,
+                    audio_asset_me: None,
+                    audio_asset_them: None,
                     snippet: row.get(7)?,
                 })
             },
         )?;
+
+        conversation.audio_asset_me =
+            Self::load_audio_asset_conn(&conn, "conversation", conversation.id, "me")?;
+        conversation.audio_asset_them =
+            Self::load_audio_asset_conn(&conn, "conversation", conversation.id, "them")?;
+        conversation.audio_path_me = conversation
+            .audio_asset_me
+            .as_ref()
+            .and_then(|asset| asset.path.clone());
+        conversation.audio_path_them = conversation
+            .audio_asset_them
+            .as_ref()
+            .and_then(|asset| asset.path.clone());
 
         let utterances = {
             let mut stmt = conn.prepare(
@@ -496,6 +1142,7 @@ impl Database {
     /// may be `None` if that channel never captured anything, so both are
     /// updated independently via `COALESCE` rather than overwriting a path
     /// already recorded for the other channel.
+    #[allow(dead_code)]
     pub fn update_conversation_audio_paths(
         &self,
         conversation_id: i64,
@@ -515,15 +1162,24 @@ impl Database {
 
     /// Deletes the row (and its utterances/suggestions) and, best-effort,
     /// both archived audio files. A missing file is not an error.
-    pub fn delete_conversation(&self, conversation_id: i64) -> Result<()> {
+    pub fn delete_conversation(&self, conversation_id: i64, recordings_root: &Path) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        let audio_paths: Option<(Option<String>, Option<String>)> = conn
+        let legacy_paths: Option<(Option<String>, Option<String>)> = conn
             .query_row(
                 "SELECT audio_path_me, audio_path_them FROM conversations WHERE id = ?1",
                 rusqlite::params![conversation_id],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .ok();
+        let mut paths = Self::audio_paths_conn(&conn, "conversation", conversation_id)?;
+        if let Some((me, them)) = legacy_paths {
+            if let Some(path) = me {
+                paths.push(path);
+            }
+            if let Some(path) = them {
+                paths.push(path);
+            }
+        }
 
         // Explicit cascade, not just relying on the FK pragma: belt-and-braces
         // in case a future connection opens without `PRAGMA foreign_keys = ON`.
@@ -539,15 +1195,12 @@ impl Database {
             "DELETE FROM conversations WHERE id = ?1",
             rusqlite::params![conversation_id],
         )?;
-
-        if let Some((me, them)) = audio_paths {
-            if let Some(path) = me.filter(|p| !p.is_empty()) {
-                let _ = std::fs::remove_file(path);
-            }
-            if let Some(path) = them.filter(|p| !p.is_empty()) {
-                let _ = std::fs::remove_file(path);
-            }
-        }
+        conn.execute(
+            "DELETE FROM audio_assets WHERE owner_type = 'conversation' AND owner_id = ?1",
+            rusqlite::params![conversation_id],
+        )?;
+        drop(conn);
+        Self::remove_paths(recordings_root, paths);
         Ok(())
     }
 
@@ -564,7 +1217,8 @@ impl Database {
             raw_transcript: row.get(4)?,
             body_markdown: row.get(5)?,
             tags,
-            audio_path: row.get(7)?,
+            audio_path: None,
+            audio_segments: Vec::new(),
         })
     }
 
@@ -597,7 +1251,12 @@ impl Database {
     /// `body_markdown` isn't touched here — editing the raw transcript
     /// after a cleanup pass leaves the cleaned version as-is until the user
     /// re-runs cleanup, rather than silently invalidating it.
-    pub fn update_note(&self, note_id: i64, title: Option<&str>, raw_transcript: &str) -> Result<()> {
+    pub fn update_note(
+        &self,
+        note_id: i64,
+        title: Option<&str>,
+        raw_transcript: &str,
+    ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE notes SET title = ?2, raw_transcript = ?3, updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
@@ -628,6 +1287,7 @@ impl Database {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn update_note_audio_path(&self, note_id: i64, audio_path: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -645,26 +1305,56 @@ impl Database {
         );
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(rusqlite::params![limit, offset], Self::row_to_note)?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        let mut notes = rows.collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+        for note in &mut notes {
+            Self::attach_note_audio(&conn, note)?;
+        }
+        Ok(notes)
     }
 
     pub fn get_note(&self, note_id: i64) -> Result<Note> {
         let conn = self.conn.lock().unwrap();
         let sql = format!("SELECT {} FROM notes WHERE id = ?1", Self::NOTE_COLUMNS);
-        conn.query_row(&sql, rusqlite::params![note_id], Self::row_to_note)
-            .map_err(Into::into)
+        let mut note = conn
+            .query_row(&sql, rusqlite::params![note_id], Self::row_to_note)
+            .map_err(anyhow::Error::from)?;
+        Self::attach_note_audio(&conn, &mut note)?;
+        Ok(note)
     }
 
-    /// Deletes the row and, best-effort, its archived audio file.
-    pub fn delete_note(&self, note_id: i64) -> Result<()> {
+    /// Deletes the row and every linked audio segment. Missing files are
+    /// harmless; paths outside the recordings root are never removed.
+    pub fn delete_note(&self, note_id: i64, recordings_root: &Path) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        let audio_path: Option<String> = conn
-            .query_row("SELECT audio_path FROM notes WHERE id = ?1", [note_id], |r| r.get(0))
+        let legacy_path: Option<String> = conn
+            .query_row(
+                "SELECT audio_path FROM notes WHERE id = ?1",
+                [note_id],
+                |r| r.get(0),
+            )
             .ok();
-        conn.execute("DELETE FROM notes WHERE id = ?1", [note_id])?;
-        if let Some(path) = audio_path.filter(|p| !p.is_empty()) {
-            let _ = std::fs::remove_file(path);
+        let mut paths = Self::audio_paths_conn(&conn, "note", note_id)?;
+        if let Some(path) = legacy_path {
+            paths.push(path);
         }
+        conn.execute("DELETE FROM notes WHERE id = ?1", [note_id])?;
+        conn.execute(
+            "DELETE FROM audio_assets WHERE owner_type = 'note' AND owner_id = ?1",
+            [note_id],
+        )?;
+        drop(conn);
+        Self::remove_paths(recordings_root, paths);
+        Ok(())
+    }
+
+    fn attach_note_audio(conn: &Connection, note: &mut Note) -> Result<()> {
+        note.audio_segments = Self::load_audio_assets_conn(conn, "note", note.id, "main")?;
+        note.audio_path = note
+            .audio_segments
+            .iter()
+            .rev()
+            .find_map(|asset| asset.path.clone());
         Ok(())
     }
 }
@@ -672,6 +1362,7 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
 
     fn insert_raw(
         db: &Database,
@@ -845,20 +1536,26 @@ mod tests {
     fn delete_conversation_cascades_utterances_and_suggestions() {
         let db = Database::new_in_memory().unwrap();
         let id = db.create_conversation(None).unwrap();
-        db.insert_conversation_utterance(id, "me", 0, "hello").unwrap();
-        db.insert_conversation_suggestion(id, 0, None, "say hi back").unwrap();
+        db.insert_conversation_utterance(id, "me", 0, "hello")
+            .unwrap();
+        db.insert_conversation_suggestion(id, 0, None, "say hi back")
+            .unwrap();
 
-        db.delete_conversation(id).unwrap();
+        db.delete_conversation(id, Path::new("")).unwrap();
 
         let conn = db.conn.lock().unwrap();
         let conversations: i64 = conn
             .query_row("SELECT COUNT(*) FROM conversations", [], |r| r.get(0))
             .unwrap();
         let utterances: i64 = conn
-            .query_row("SELECT COUNT(*) FROM conversation_utterances", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM conversation_utterances", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         let suggestions: i64 = conn
-            .query_row("SELECT COUNT(*) FROM conversation_suggestions", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM conversation_suggestions", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(conversations, 0);
         assert_eq!(utterances, 0);
@@ -881,9 +1578,12 @@ mod tests {
     fn get_recent_utterances_filters_by_time_and_includes_both_channels() {
         let db = Database::new_in_memory().unwrap();
         let id = db.create_conversation(None).unwrap();
-        db.insert_conversation_utterance(id, "me", 1000, "old one").unwrap();
-        db.insert_conversation_utterance(id, "them", 5000, "recent them").unwrap();
-        db.insert_conversation_utterance(id, "me", 5200, "recent me").unwrap();
+        db.insert_conversation_utterance(id, "me", 1000, "old one")
+            .unwrap();
+        db.insert_conversation_utterance(id, "them", 5000, "recent them")
+            .unwrap();
+        db.insert_conversation_utterance(id, "me", 5200, "recent me")
+            .unwrap();
 
         let recent = db.get_recent_utterances(id, 4000).unwrap();
         assert_eq!(recent.len(), 2);
@@ -920,7 +1620,8 @@ mod tests {
         db.append_note_transcript(id, "raw text").unwrap();
         db.set_note_markdown(id, "# Title\n\ncleaned up").unwrap();
 
-        db.update_note(id, Some("My title"), "edited raw text").unwrap();
+        db.update_note(id, Some("My title"), "edited raw text")
+            .unwrap();
 
         let note = db.get_note(id).unwrap();
         assert_eq!(note.title.as_deref(), Some("My title"));
@@ -958,7 +1659,335 @@ mod tests {
     fn delete_note_removes_the_row() {
         let db = Database::new_in_memory().unwrap();
         let id = db.create_note().unwrap();
-        db.delete_note(id).unwrap();
+        db.delete_note(id, Path::new("")).unwrap();
         assert!(db.get_note(id).is_err());
+    }
+
+    fn audio_test_root(label: &str) -> PathBuf {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("agenda-db-audio-{label}-{suffix}"));
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn test_wav() -> Vec<u8> {
+        crate::audio::recorder::encode_wav(&[0.1, -0.1, 0.2, -0.2], 16_000).unwrap()
+    }
+
+    fn create_ready_asset(
+        db: &Database,
+        owner_type: &str,
+        owner_id: i64,
+        channel: &str,
+        path: &Path,
+    ) -> (i64, i64) {
+        let (asset_id, sequence) = db.begin_audio_asset(owner_type, owner_id, channel).unwrap();
+        db.set_audio_asset_path(asset_id, path).unwrap();
+        let metadata = crate::audio::archive::write_wav_atomically(path, &test_wav()).unwrap();
+        db.mark_audio_asset_ready(asset_id, metadata.byte_length, metadata.duration_ms)
+            .unwrap();
+        (asset_id, sequence)
+    }
+
+    #[test]
+    fn audio_asset_states_hide_incomplete_paths_and_reconcile_writes() {
+        let db = Database::new_in_memory().unwrap();
+        let root = audio_test_root("states");
+
+        let saving_id = db
+            .save_transcription("saving", None, "none", None, None, None)
+            .unwrap();
+        let (saving_asset_id, _) = db
+            .begin_audio_asset("dictation", saving_id, "main")
+            .unwrap();
+        let saving_path = root.join("saving.wav");
+        db.set_audio_asset_path(saving_asset_id, &saving_path)
+            .unwrap();
+
+        let saving = db.get_transcriptions(10, 0).unwrap().remove(0);
+        let saving_asset = saving.audio_asset.unwrap();
+        assert_eq!(saving_asset.status, AudioAssetStatus::Saving);
+        assert_eq!(saving_asset.path, None);
+
+        // History validation must not mistake a live `.part` file for an
+        // interrupted write. Startup passes `true` below; live reads pass
+        // `false` so the active consumer remains the single owner.
+        let saving_temp = crate::audio::archive::temp_path(&saving_path);
+        std::fs::write(&saving_temp, &test_wav()[..8]).unwrap();
+        db.reconcile_audio_assets(&root, false).unwrap();
+        assert!(saving_temp.exists());
+        assert_eq!(
+            db.get_transcriptions(10, 0)
+                .unwrap()
+                .remove(0)
+                .audio_asset
+                .unwrap()
+                .status,
+            AudioAssetStatus::Saving
+        );
+        std::fs::remove_file(&saving_temp).unwrap();
+
+        crate::audio::archive::write_wav_atomically(&saving_path, &test_wav()).unwrap();
+        db.reconcile_audio_assets(&root, true).unwrap();
+        let ready = db.get_transcriptions(10, 0).unwrap().remove(0);
+        let ready_asset = ready.audio_asset.unwrap();
+        assert_eq!(ready_asset.status, AudioAssetStatus::Ready);
+        assert_eq!(
+            ready_asset.path.as_deref(),
+            Some(saving_path.to_str().unwrap())
+        );
+        assert!(ready_asset.byte_length.unwrap() > 0);
+
+        std::fs::remove_file(&saving_path).unwrap();
+        db.mark_audio_asset_missing(saving_asset_id).unwrap();
+        let missing = db.get_audio_asset(saving_asset_id).unwrap().unwrap();
+        assert_eq!(missing.status, AudioAssetStatus::Missing);
+        assert_eq!(missing.error.as_deref(), Some("file_missing"));
+
+        let failed_id = db
+            .save_transcription("failed", None, "none", None, None, None)
+            .unwrap();
+        let (failed_asset_id, _) = db
+            .begin_audio_asset("dictation", failed_id, "main")
+            .unwrap();
+        let failed_path = root.join("failed.wav");
+        db.set_audio_asset_path(failed_asset_id, &failed_path)
+            .unwrap();
+        db.mark_audio_asset_failed(failed_asset_id, "write_failed")
+            .unwrap();
+        let failed = db
+            .get_transcriptions(10, 0)
+            .unwrap()
+            .into_iter()
+            .find(|row| row.id == failed_id)
+            .unwrap();
+        let failed_asset = failed.audio_asset.unwrap();
+        assert_eq!(failed_asset.status, AudioAssetStatus::Failed);
+        assert_eq!(failed_asset.path, None);
+        assert_eq!(failed_asset.error.as_deref(), Some("write_failed"));
+
+        let interrupted_id = db
+            .save_transcription("interrupted", None, "none", None, None, None)
+            .unwrap();
+        let (interrupted_asset_id, _) = db
+            .begin_audio_asset("dictation", interrupted_id, "main")
+            .unwrap();
+        let interrupted_path = root.join("interrupted.wav");
+        db.set_audio_asset_path(interrupted_asset_id, &interrupted_path)
+            .unwrap();
+        let interrupted_temp = crate::audio::archive::temp_path(&interrupted_path);
+        std::fs::write(&interrupted_temp, &test_wav()[..8]).unwrap();
+        db.reconcile_audio_assets(&root, true).unwrap();
+        let interrupted = db
+            .get_transcriptions(10, 0)
+            .unwrap()
+            .into_iter()
+            .find(|row| row.id == interrupted_id)
+            .unwrap();
+        let interrupted_asset = interrupted.audio_asset.unwrap();
+        assert_eq!(interrupted_asset.status, AudioAssetStatus::Failed);
+        assert_eq!(interrupted_asset.error.as_deref(), Some("interrupted"));
+        assert!(!interrupted_path.exists());
+        assert!(!interrupted_temp.exists());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_audio_rows_reconcile_to_ready_or_missing() {
+        let db = Database::new_in_memory().unwrap();
+        let root = audio_test_root("legacy");
+        let existing_path = root.join("legacy-existing.wav");
+        let missing_path = root.join("legacy-missing.wav");
+        crate::audio::archive::write_wav_atomically(&existing_path, &test_wav()).unwrap();
+
+        let (existing_id, missing_id) = {
+            let conn = db.conn.lock().unwrap();
+            conn.execute("DELETE FROM audio_assets", []).unwrap();
+            conn.execute_batch("PRAGMA user_version = 5;").unwrap();
+            conn.execute(
+                "INSERT INTO transcriptions (original_text, audio_path) VALUES (?1, ?2)",
+                rusqlite::params!["legacy existing", existing_path.to_string_lossy()],
+            )
+            .unwrap();
+            let existing_id = conn.last_insert_rowid();
+            conn.execute(
+                "INSERT INTO transcriptions (original_text, audio_path) VALUES (?1, ?2)",
+                rusqlite::params!["legacy missing", missing_path.to_string_lossy()],
+            )
+            .unwrap();
+            let missing_id = conn.last_insert_rowid();
+            migrations::run(&conn).unwrap();
+            (existing_id, missing_id)
+        };
+
+        db.reconcile_audio_assets(&root, true).unwrap();
+        let rows = db.get_transcriptions(10, 0).unwrap();
+        let existing = rows.iter().find(|row| row.id == existing_id).unwrap();
+        assert_eq!(
+            existing.audio_asset.as_ref().unwrap().status,
+            AudioAssetStatus::Ready
+        );
+        let missing = rows.iter().find(|row| row.id == missing_id).unwrap();
+        let missing_asset = missing.audio_asset.as_ref().unwrap();
+        assert_eq!(missing_asset.status, AudioAssetStatus::Missing);
+        assert_eq!(missing_asset.error.as_deref(), Some("file_missing"));
+        assert_eq!(missing_asset.path, None);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn note_audio_segments_preserve_append_order() {
+        let db = Database::new_in_memory().unwrap();
+        let root = audio_test_root("note-order");
+        let note_id = db.create_note().unwrap();
+        let first_path = root.join("first.wav");
+        let second_path = root.join("second.wav");
+        let (_, first_sequence) = create_ready_asset(&db, "note", note_id, "main", &first_path);
+        let (_, second_sequence) = create_ready_asset(&db, "note", note_id, "main", &second_path);
+
+        assert_eq!(first_sequence, 0);
+        assert_eq!(second_sequence, 1);
+        let note = db.get_note(note_id).unwrap();
+        assert_eq!(note.audio_segments.len(), 2);
+        assert_eq!(note.audio_segments[0].sequence, 0);
+        assert_eq!(note.audio_segments[1].sequence, 1);
+        assert_eq!(
+            note.audio_segments[0].path.as_deref(),
+            Some(first_path.to_str().unwrap())
+        );
+        assert_eq!(
+            note.audio_segments[1].path.as_deref(),
+            Some(second_path.to_str().unwrap())
+        );
+        assert_eq!(
+            note.audio_path.as_deref(),
+            Some(second_path.to_str().unwrap())
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn repeated_audio_asset_reads_do_not_create_sources_or_assets() {
+        let db = Database::new_in_memory().unwrap();
+        let root = audio_test_root("read-only-playback");
+        let source_id = db
+            .save_transcription("read-only", None, "none", None, None, None)
+            .unwrap();
+        let path = root.join("read-only.wav");
+        let (asset_id, _) = create_ready_asset(&db, "dictation", source_id, "main", &path);
+        let mut long_wav =
+            vec![0_u8; (crate::commands::playback::MAX_RESPONSE_BYTES * 2 + 31) as usize];
+        long_wav[0..4].copy_from_slice(b"RIFF");
+        long_wav[8..12].copy_from_slice(b"WAVE");
+        std::fs::write(&path, long_wav).unwrap();
+
+        let counts = || {
+            let conn = db.conn.lock().unwrap();
+            let sources: i64 = conn
+                .query_row("SELECT COUNT(*) FROM transcriptions", [], |row| row.get(0))
+                .unwrap();
+            let assets: i64 = conn
+                .query_row("SELECT COUNT(*) FROM audio_assets", [], |row| row.get(0))
+                .unwrap();
+            (sources, assets)
+        };
+        let before = counts();
+
+        for start in [
+            0,
+            crate::commands::playback::MAX_RESPONSE_BYTES,
+            crate::commands::playback::MAX_RESPONSE_BYTES * 2,
+        ] {
+            let asset = db.get_audio_asset(asset_id).unwrap().unwrap();
+            assert_eq!(asset.id, asset_id);
+            assert_eq!(asset.owner_id, source_id);
+            assert_eq!(asset.status, AudioAssetStatus::Ready);
+            let request = tauri::http::Request::builder()
+                .method(tauri::http::Method::GET)
+                .header(tauri::http::header::RANGE, format!("bytes={start}-"))
+                .uri(format!("/audio/{asset_id}"))
+                .body(Vec::new())
+                .unwrap();
+            assert_eq!(
+                crate::commands::playback::serve_file(request, &path).status(),
+                tauri::http::StatusCode::PARTIAL_CONTENT
+            );
+        }
+
+        assert_eq!(counts(), before);
+        assert_eq!(db.get_transcriptions(10, 0).unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn deleting_sources_removes_all_segments_and_preserves_outside_files() {
+        let db = Database::new_in_memory().unwrap();
+        let root = audio_test_root("delete-sources");
+        let outside = root.parent().unwrap().join(format!(
+            "{}-outside.wav",
+            root.file_name().unwrap().to_string_lossy()
+        ));
+        std::fs::write(&outside, b"unrelated").unwrap();
+
+        let dictation_id = db
+            .save_transcription("dictation", None, "none", None, None, None)
+            .unwrap();
+        let dictation_path = root.join("dictation.wav");
+        create_ready_asset(&db, "dictation", dictation_id, "main", &dictation_path);
+
+        let conversation_id = db.create_conversation(None).unwrap();
+        let conversation_me = root.join("conversation-me.wav");
+        let conversation_them = root.join("conversation-them.wav");
+        create_ready_asset(&db, "conversation", conversation_id, "me", &conversation_me);
+        create_ready_asset(
+            &db,
+            "conversation",
+            conversation_id,
+            "them",
+            &conversation_them,
+        );
+
+        let note_id = db.create_note().unwrap();
+        let note_first = root.join("note-first.wav");
+        let note_missing = root.join("note-missing.wav");
+        create_ready_asset(&db, "note", note_id, "main", &note_first);
+        create_ready_asset(&db, "note", note_id, "main", &note_missing);
+        std::fs::remove_file(&note_missing).unwrap();
+
+        let (outside_asset_id, _) = db.begin_audio_asset("note", note_id, "main").unwrap();
+        db.set_audio_asset_path(outside_asset_id, &outside).unwrap();
+        db.mark_audio_asset_ready(outside_asset_id, 9, 1).unwrap();
+
+        db.delete_transcription(dictation_id, &root).unwrap();
+        db.delete_conversation(conversation_id, &root).unwrap();
+        db.delete_note(note_id, &root).unwrap();
+
+        assert!(!dictation_path.exists());
+        assert!(!conversation_me.exists());
+        assert!(!conversation_them.exists());
+        assert!(!note_first.exists());
+        assert!(outside.exists());
+
+        // Missing files and repeated deletion are both harmless.
+        db.delete_transcription(dictation_id, &root).unwrap();
+        db.delete_conversation(conversation_id, &root).unwrap();
+        db.delete_note(note_id, &root).unwrap();
+        assert!(db.begin_audio_asset("note", note_id, "main").is_err());
+
+        let conn = db.conn.lock().unwrap();
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM audio_assets", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(remaining, 0);
+        drop(conn);
+
+        let _ = std::fs::remove_file(outside);
+        let _ = std::fs::remove_dir_all(root);
     }
 }

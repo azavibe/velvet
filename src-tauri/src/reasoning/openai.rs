@@ -70,16 +70,40 @@ pub async fn complete(
 
     // Try Responses API first (newer models) — only for OpenAI
     if base_url.is_none() {
-        match complete_responses(client, api_key, model, system_prompt, user_text, max_tokens, temperature, base).await {
+        match complete_responses(
+            client,
+            api_key,
+            model,
+            system_prompt,
+            user_text,
+            max_tokens,
+            temperature,
+            base,
+        )
+        .await
+        {
             Ok(text) => return Ok(text),
             Err(e) => {
-                log::debug!("Responses API failed, falling back to Chat Completions: {}", e);
+                log::debug!(
+                    "Responses API failed, falling back to Chat Completions: {}",
+                    e
+                );
             }
         }
     }
 
     // Fall back to Chat Completions API
-    complete_chat(client, api_key, model, system_prompt, user_text, max_tokens, temperature, base).await
+    complete_chat(
+        client,
+        api_key,
+        model,
+        system_prompt,
+        user_text,
+        max_tokens,
+        temperature,
+        base,
+    )
+    .await
 }
 
 async fn complete_responses(
@@ -161,9 +185,7 @@ async fn complete_chat(
 
     let url = format!("{}/chat/completions", base_url);
     log::info!("[Whisperi] POST {} (model={})", url, model);
-    let mut req_builder = client
-        .post(&url)
-        .bearer_auth(api_key);
+    let mut req_builder = client.post(&url).bearer_auth(api_key);
 
     // OpenRouter requires these headers for proper authentication routing
     if base_url.contains("openrouter.ai") {
@@ -172,10 +194,7 @@ async fn complete_chat(
             .header("X-Title", "Aral");
     }
 
-    let response = req_builder
-        .json(&request)
-        .send()
-        .await?;
+    let response = req_builder.json(&request).send().await?;
 
     let response = crate::http::check_response(response, "Chat API error").await?;
 

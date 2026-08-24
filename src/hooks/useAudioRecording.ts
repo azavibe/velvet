@@ -18,6 +18,7 @@ import {
   loadTranscriptionSettings,
   buildTranscriptionDictionary,
   transcribe,
+  retryCommandTranscription,
   enhance,
   formatOutput,
 } from "./useTranscriptionPipeline";
@@ -37,11 +38,21 @@ interface UseAudioRecordingOptions {
     description: string;
     variant: "default" | "destructive" | "success";
   }) => void;
-  /** Given the transcribed text, run it as an app command if it is one.
+  /** Given the provider-normalized text, run it as an app command if it is one.
    *  Returning true means it was handled as a command, so the text is an
    *  instruction rather than dictation and must not be enhanced, pasted, or
-   *  saved to history. See config/voiceCommands.ts. */
-  onVoiceCommand?: (text: string) => Promise<boolean>;
+   *  saved to history. The persisted name/aliases travel with the completed
+   *  transcription so a stale React render cannot use an old wake word. */
+  onVoiceCommand?: (
+    text: string,
+    context: {
+      agentName: string;
+      agentAliases: string[];
+      retryTranscription: (prompt: string) => Promise<string | null>;
+      applicationLanguage: string | null;
+      durationMs: number | null;
+    },
+  ) => Promise<boolean>;
 }
 
 export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecordingOptions = {}) {
@@ -155,9 +166,11 @@ export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecording
         settings,
         transcriptionDict,
       );
-      console.log("[Whisperi] Transcription:", providerText);
-      if (detectedLanguage) {
-        console.log("[Whisperi] Detected language:", detectedLanguage);
+      if (import.meta.env.DEV || settings.debugMode) {
+        console.debug("[Whisperi] transcription received", {
+          characters: providerText.length,
+          detectedLanguage: detectedLanguage ?? null,
+        });
       }
 
       if (isEmptyTranscription(providerText)) {
@@ -168,24 +181,30 @@ export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecording
         return;
       }
 
-      const correctedText = applyAlwaysDictionaryCorrections(
-        providerText,
-        settings.dictionary,
-      );
-
       // "Aral, start notes" is an instruction to the app, not text to type.
-      // Checked against the dictionary-corrected text because the agent name
-      // is itself a dictionary term, so this is where a misheard name is
-      // already fixed up. Bails before enhancement, paste, and history —
-      // a command isn't dictation.
+      // Detect against provider-normalized text before arbitrary user
+      // dictionary replacements. Command-scoped ASR tolerance belongs in the
+      // recognizer; a custom nodes→notes rule must not gain permission to
+      // launch UI actions. Bails before enhancement, paste, and history.
       if (onVoiceCommandRef.current) {
-        const handled = await onVoiceCommandRef.current(correctedText);
+        const handled = await onVoiceCommandRef.current(providerText, {
+          agentName: settings.agentName,
+          agentAliases: settings.agentAliases,
+          retryTranscription: (prompt) => retryCommandTranscription(audioData, settings, prompt),
+          applicationLanguage: settings.uiLanguage ?? null,
+          durationMs,
+        });
         if (handled) {
-          console.log("[Aral] Handled as voice command:", correctedText);
+          if (import.meta.env.DEV) console.debug("[voice-command] code=command_consumed");
           setPhase("idle");
           return;
         }
       }
+
+      const correctedText = applyAlwaysDictionaryCorrections(
+        providerText,
+        settings.dictionary,
+      );
 
       let finalText = correctedText;
       let rawAiResponse: string | null = null;

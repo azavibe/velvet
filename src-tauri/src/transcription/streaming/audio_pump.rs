@@ -109,9 +109,7 @@ mod tests {
         let from_rate = 48_000;
         let to_rate = 16_000;
         let n_samples = 4800;
-        let input: Vec<f32> = (0..n_samples)
-            .map(|i| (i as f32 * 0.05).sin())
-            .collect();
+        let input: Vec<f32> = (0..n_samples).map(|i| (i as f32 * 0.05).sin()).collect();
 
         // Reference: offline resample the whole thing
         let reference = crate::audio::recorder::resample_for_tests(&input, from_rate, to_rate);
@@ -135,7 +133,13 @@ mod tests {
         let n = online.len().min(reference.len());
         for i in 0..n {
             let diff = (online[i] as f64 - reference[i] as f64).abs();
-            assert!(diff < 0.01, "sample {} diverged: online {} ref {}", i, online[i], reference[i]);
+            assert!(
+                diff < 0.01,
+                "sample {} diverged: online {} ref {}",
+                i,
+                online[i],
+                reference[i]
+            );
         }
     }
 

@@ -14,13 +14,22 @@ import {
   onNoteStartRequested,
   onConversationStartRequested,
   onCaptureStopRequested,
+  onCaptureIntentAvailable,
+  type CaptureIntent,
 } from "@/services/tauriApi";
+import { captureIntentConsumer } from "@/services/captureIntentConsumer";
 import StyledSelect from "@/components/ui/StyledSelect";
 
 /** Synthetic persona-dropdown entry — not a real Persona, never persisted.
  *  Picking it swaps the window into note-taking mode (see `mode` state
  *  below) instead of selecting `activePersonaId`. */
 const NOTE_MODE_VALUE = "__note__";
+
+function safeCaptureIntentError(error: unknown): string {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  const code = message.split(/[\s:]/, 1)[0] ?? "";
+  return /^[a-z0-9_-]{1,80}$/i.test(code) ? code : "capture_intent_failed";
+}
 
 function ConversationWindowInner() {
   const { t } = useTranslation();
@@ -62,6 +71,47 @@ function ConversationWindowInner() {
   captureRef.current = { note, conversation };
   const updateRef = useRef(update);
   updateRef.current = update;
+  const onCaptureToastRef = useRef(onCaptureToast);
+  onCaptureToastRef.current = onCaptureToast;
+  captureIntentConsumer.setDiagnosticListener(
+    import.meta.env.DEV
+      ? (event) => console.debug("[voice-command]", event)
+      : undefined,
+  );
+
+  const handleCaptureIntent = useCallback(async (intent: CaptureIntent) => {
+    if (intent.kind === "note") {
+      setMode("note");
+      if (!captureRef.current.note.isActive) {
+        await captureRef.current.note.start();
+      }
+    } else if (intent.kind === "conversation") {
+      setMode("conversation");
+      if (intent.persona_id) updateRef.current("activePersonaId", intent.persona_id);
+      if (!captureRef.current.conversation.isActive) setConsentRequested(true);
+    } else if (intent.kind === "stop") {
+      if (captureRef.current.note.isActive) await captureRef.current.note.stop();
+      if (captureRef.current.conversation.isActive) await captureRef.current.conversation.stop();
+    } else {
+      throw new Error("capture_intent_target_mismatch");
+    }
+  }, []);
+
+  const consumePendingCaptureIntent = useCallback(async () => {
+    await captureIntentConsumer.consume(loaded, handleCaptureIntent);
+  }, [handleCaptureIntent, loaded]);
+
+  const consumePendingCaptureIntentSafely = useCallback(() => {
+    void consumePendingCaptureIntent().catch((error) => {
+      onCaptureToastRef.current?.({ description: safeCaptureIntentError(error) });
+    });
+  }, [consumePendingCaptureIntent]);
+
+  const handleLegacyCaptureIntentSafely = useCallback((intent: CaptureIntent) => {
+    void handleCaptureIntent(intent).catch((error) => {
+      onCaptureToastRef.current?.({ description: safeCaptureIntentError(error) });
+    });
+  }, [handleCaptureIntent]);
 
   // Reset the title field whenever a fresh note starts (an "Append
   // Dictation" resume would ideally show the existing title, but that's a
@@ -87,32 +137,35 @@ function ConversationWindowInner() {
   useEffect(() => {
     const unlistenAppend = onNoteAppendRequested((noteId) => {
       setMode("note");
-      captureRef.current.note.start(noteId);
+      void captureRef.current.note.start(noteId).catch((error) => {
+        onCaptureToastRef.current?.({ description: String(error) });
+      });
     });
     const unlistenNoteStart = onNoteStartRequested(() => {
-      setMode("note");
-      if (!captureRef.current.note.isActive) captureRef.current.note.start();
+      handleLegacyCaptureIntentSafely({ id: 0, kind: "note", persona_id: null });
     });
     const unlistenConversationStart = onConversationStartRequested((personaId) => {
-      setMode("conversation");
-      // Applied here rather than by the sender so it can't land after the
-      // start. `activePersonaRef` inside useConversation is reassigned during
-      // the render this schedules, which runs before the consent effect that
-      // eventually calls start() — so start() sees the new persona.
-      if (personaId) updateRef.current("activePersonaId", personaId);
-      if (!captureRef.current.conversation.isActive) setConsentRequested(true);
+      handleLegacyCaptureIntentSafely({ id: 0, kind: "conversation", persona_id: personaId });
     });
     const unlistenStop = onCaptureStopRequested(() => {
-      if (captureRef.current.note.isActive) captureRef.current.note.stop();
-      if (captureRef.current.conversation.isActive) captureRef.current.conversation.stop();
+      handleLegacyCaptureIntentSafely({ id: 0, kind: "stop", persona_id: null });
     });
+    const unlistenIntent = onCaptureIntentAvailable(() => {
+      consumePendingCaptureIntentSafely();
+    });
+
+    // Register first, then consume. If the window was still loading when the
+    // backend showed it, the durable pending intent survives until this point.
+    void unlistenIntent.then(consumePendingCaptureIntentSafely).catch(() => {});
+
     return () => {
       unlistenAppend.then((fn) => fn());
       unlistenNoteStart.then((fn) => fn());
       unlistenConversationStart.then((fn) => fn());
       unlistenStop.then((fn) => fn());
+      unlistenIntent.then((fn) => fn());
     };
-  }, []);
+  }, [consumePendingCaptureIntentSafely, handleLegacyCaptureIntentSafely]);
 
   const handleClose = useCallback(() => {
     getCurrentWebviewWindow().hide();

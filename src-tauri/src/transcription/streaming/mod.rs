@@ -104,7 +104,11 @@ impl LiveSessionState {
     }
 
     pub fn expected_hwnd(&self, id: u64) -> Option<isize> {
-        self.sessions.lock().unwrap().get(&id).and_then(|h| h.expected_hwnd)
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(&id)
+            .and_then(|h| h.expected_hwnd)
     }
 
     /// Best-effort graceful shutdown: signal every active session to cancel and

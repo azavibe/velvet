@@ -1,5 +1,10 @@
-import { useEffect, useCallback, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
+import {
+  HotkeyRegistrationController,
+  type HotkeyEvent,
+} from "@/services/hotkeyLifecycle";
+import { startupMark } from "@/services/startupDiagnostics";
 
 interface UseHotkeyOptions {
   shortcut: string;
@@ -7,6 +12,7 @@ interface UseHotkeyOptions {
   onToggle: () => void;
   onPushStart?: () => void;
   onPushEnd?: () => void;
+  onRegistrationError?: () => void;
   enabled?: boolean;
 }
 
@@ -16,74 +22,57 @@ export function useHotkey({
   onToggle,
   onPushStart,
   onPushEnd,
+  onRegistrationError,
   enabled = true,
 }: UseHotkeyOptions) {
-  const registeredRef = useRef<string | null>(null);
-
-  // Store callbacks in refs so re-registration only happens when
-  // shortcut/activationMode/enabled change — not on every render.
   const onToggleRef = useRef(onToggle);
   const onPushStartRef = useRef(onPushStart);
   const onPushEndRef = useRef(onPushEnd);
+  const onRegistrationErrorRef = useRef(onRegistrationError);
   const activationModeRef = useRef(activationMode);
+  const controllerRef = useRef<HotkeyRegistrationController | null>(null);
 
   onToggleRef.current = onToggle;
   onPushStartRef.current = onPushStart;
   onPushEndRef.current = onPushEnd;
+  onRegistrationErrorRef.current = onRegistrationError;
   activationModeRef.current = activationMode;
 
-  const cleanup = useCallback(async () => {
-    if (registeredRef.current) {
-      try {
-        await unregister(registeredRef.current);
-      } catch {
-        // ignore
-      }
-      registeredRef.current = null;
-    }
-  }, []);
+  if (!controllerRef.current) {
+    controllerRef.current = new HotkeyRegistrationController({
+      register: (key, callback) => register(key, callback),
+      unregister,
+      onFailure: (phase) => {
+        startupMark("global shortcut lifecycle failure", { phase });
+        onRegistrationErrorRef.current?.();
+      },
+      onRegistered: () => startupMark("global shortcut registered"),
+    });
+  }
 
-  const setup = useCallback(async (key: string) => {
-    await cleanup();
-
-    try {
-      await register(key, (event) => {
-        if (activationModeRef.current === "tap") {
-          if (event.state === "Pressed") {
-            onToggleRef.current();
-          }
-        } else {
-          if (event.state === "Pressed") {
-            onPushStartRef.current?.();
-          } else if (event.state === "Released") {
-            onPushEndRef.current?.();
-          }
-        }
-      });
-      registeredRef.current = key;
-    } catch (e) {
-      console.warn("Failed to register hotkey:", key, e);
-    }
-  }, [cleanup]);
+  const controller = controllerRef.current;
 
   useEffect(() => {
-    if (!shortcut || !enabled) {
-      cleanup();
-      return;
-    }
+    const callback = (event: HotkeyEvent) => {
+      if (activationModeRef.current === "tap") {
+        if (event.state === "Pressed") onToggleRef.current();
+      } else if (event.state === "Pressed") {
+        onPushStartRef.current?.();
+      } else if (event.state === "Released") {
+        onPushEndRef.current?.();
+      }
+    };
 
-    let cancelled = false;
-
-    (async () => {
-      await setup(shortcut);
-      if (cancelled) registeredRef.current = null;
-    })();
+    startupMark("global shortcut registration requested", {
+      enabled,
+      configured: !!shortcut,
+    });
+    void controller.update(shortcut, enabled, callback);
 
     return () => {
-      cancelled = true;
-      cleanup();
+      void controller.disable();
     };
-  }, [shortcut, enabled, cleanup, setup]);
+  }, [controller, shortcut, enabled]);
 
   // Re-register hotkey when the window regains focus (e.g. after a remote
   // desktop session like RustDesk disrupts OS-level global hotkey hooks).
@@ -91,10 +80,10 @@ export function useHotkey({
     if (!shortcut || !enabled) return;
 
     const handleFocus = () => {
-      setup(shortcut);
+      void controller.retry();
     };
 
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
-  }, [shortcut, enabled, setup]);
+  }, [controller, shortcut, enabled]);
 }

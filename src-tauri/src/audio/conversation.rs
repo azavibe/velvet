@@ -36,7 +36,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::recorder::{AudioError, TARGET_SAMPLE_RATE, encode_wav, is_speechless, negotiate_config, resample};
+use super::recorder::{
+    AudioError, TARGET_SAMPLE_RATE, encode_wav, is_speechless, negotiate_config, resample,
+};
 
 /// Silence needed after speech before a chunk is finalized and sent for
 /// transcription. Every extra millisecond here is a millisecond added to
@@ -185,7 +187,12 @@ fn set_error(error: &Mutex<Option<String>>, msg: String) {
 
 /// Turn a finalized native-rate buffer into a `ConversationChunk`, or `None`
 /// if it's still effectively silence (belt-and-braces on top of the VAD).
-fn to_chunk(channel: Channel, started_at_ms: i64, samples: Vec<f32>, native_rate: u32) -> Option<ConversationChunk> {
+fn to_chunk(
+    channel: Channel,
+    started_at_ms: i64,
+    samples: Vec<f32>,
+    native_rate: u32,
+) -> Option<ConversationChunk> {
     if is_speechless(&samples, native_rate) {
         return None;
     }
@@ -195,7 +202,11 @@ fn to_chunk(channel: Channel, started_at_ms: i64, samples: Vec<f32>, native_rate
         samples
     };
     let wav = encode_wav(&mono_16k, TARGET_SAMPLE_RATE).ok()?;
-    Some(ConversationChunk { channel, started_at_ms, wav })
+    Some(ConversationChunk {
+        channel,
+        started_at_ms,
+        wav,
+    })
 }
 
 /// Shared state for an in-progress conversation capture. Managed as Tauri
@@ -260,7 +271,10 @@ impl ConversationCapture {
     /// the same way `AudioRecorder::start` does; the loopback side always
     /// uses the system default output device (whatever the call app plays
     /// through).
-    pub fn start(state: &ConversationState, mic_device_id: Option<String>) -> Result<(), AudioError> {
+    pub fn start(
+        state: &ConversationState,
+        mic_device_id: Option<String>,
+    ) -> Result<(), AudioError> {
         if state.is_active.swap(true, Ordering::SeqCst) {
             return Err(AudioError::AlreadyRecording);
         }
@@ -301,14 +315,25 @@ impl ConversationCapture {
             .name("whisperi-conv-loopback".to_string())
             .spawn(move || {
                 let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-                    run_capture_thread(Channel::Them, CaptureSource::Loopback, loop_tx, them_level, loop_is_active);
+                    run_capture_thread(
+                        Channel::Them,
+                        CaptureSource::Loopback,
+                        loop_tx,
+                        them_level,
+                        loop_is_active,
+                    );
                 }));
                 if result.is_err() {
                     log::error!("[Conversation] loopback capture thread panicked");
-                    set_error(&loop_error, "System-audio capture thread panicked".to_string());
+                    set_error(
+                        &loop_error,
+                        "System-audio capture thread panicked".to_string(),
+                    );
                 }
             })
-            .map_err(|e| AudioError::StreamError(format!("Failed to spawn loopback thread: {}", e)))?;
+            .map_err(|e| {
+                AudioError::StreamError(format!("Failed to spawn loopback thread: {}", e))
+            })?;
 
         *state.mic_thread.lock().unwrap() = Some(mic_handle);
         *state.loopback_thread.lock().unwrap() = Some(loopback_handle);
@@ -344,7 +369,9 @@ enum CaptureSource {
 /// `default_output_config()` — the only config query that works for a
 /// device we intend to loop back from. See the module doc for why
 /// `default_input_config()`/`supported_input_configs()` don't apply here.
-fn negotiate_loopback_config(device: &cpal::Device) -> Result<(StreamConfig, SampleFormat), AudioError> {
+fn negotiate_loopback_config(
+    device: &cpal::Device,
+) -> Result<(StreamConfig, SampleFormat), AudioError> {
     let default = device
         .default_output_config()
         .map_err(|e| AudioError::ConfigError(e.to_string()))?;
@@ -355,7 +382,10 @@ fn negotiate_loopback_config(device: &cpal::Device) -> Result<(StreamConfig, Sam
 
 type OpenedDevice = (cpal::Device, StreamConfig, SampleFormat);
 
-fn open_mic_device(host: &cpal::Host, device_id: &Option<String>) -> Result<OpenedDevice, AudioError> {
+fn open_mic_device(
+    host: &cpal::Host,
+    device_id: &Option<String>,
+) -> Result<OpenedDevice, AudioError> {
     let device = match device_id {
         Some(id) => host
             .input_devices()
@@ -391,7 +421,11 @@ fn run_capture_thread(
     let (device, config, sample_format) = match device_and_config {
         Ok(v) => v,
         Err(e) => {
-            log::error!("[Conversation] {:?} capture setup failed: {}", channel_tag, e);
+            log::error!(
+                "[Conversation] {:?} capture setup failed: {}",
+                channel_tag,
+                e
+            );
             return;
         }
     };
@@ -415,13 +449,21 @@ fn run_capture_thread(
     let stream = match stream_result {
         Ok(s) => s,
         Err(e) => {
-            log::error!("[Conversation] {:?} failed to build stream: {}", channel_tag, e);
+            log::error!(
+                "[Conversation] {:?} failed to build stream: {}",
+                channel_tag,
+                e
+            );
             return;
         }
     };
 
     if let Err(e) = stream.play() {
-        log::error!("[Conversation] {:?} failed to play stream: {}", channel_tag, e);
+        log::error!(
+            "[Conversation] {:?} failed to play stream: {}",
+            channel_tag,
+            e
+        );
         return;
     }
 
@@ -455,7 +497,16 @@ fn build_capture_stream(
 ) -> Result<cpal::Stream, AudioError> {
     macro_rules! build {
         ($t:ty) => {
-            build_capture_stream_typed::<$t>(device, config, channels, sample_rate, accumulator, level, tx, channel_tag)
+            build_capture_stream_typed::<$t>(
+                device,
+                config,
+                channels,
+                sample_rate,
+                accumulator,
+                level,
+                tx,
+                channel_tag,
+            )
         };
     }
     match sample_format {
@@ -469,7 +520,10 @@ fn build_capture_stream(
         SampleFormat::I64 => build!(i64),
         SampleFormat::U64 => build!(u64),
         SampleFormat::F64 => build!(f64),
-        _ => Err(AudioError::ConfigError(format!("Unsupported sample format: {:?}", sample_format))),
+        _ => Err(AudioError::ConfigError(format!(
+            "Unsupported sample format: {:?}",
+            sample_format
+        ))),
     }
 }
 
@@ -498,8 +552,11 @@ where
                 let mut mono = Vec::with_capacity(data.len() / channels.max(1));
                 let mut peak: f32 = 0.0;
                 for frame in data.chunks(channels.max(1)) {
-                    let sample: f32 =
-                        frame.iter().map(|s| <f32 as cpal::Sample>::from_sample(*s)).sum::<f32>() / channels.max(1) as f32;
+                    let sample: f32 = frame
+                        .iter()
+                        .map(|s| <f32 as cpal::Sample>::from_sample(*s))
+                        .sum::<f32>()
+                        / channels.max(1) as f32;
                     mono.push(sample);
                     peak = peak.max(sample.abs());
                 }
@@ -510,7 +567,8 @@ where
 
                 let finished = accumulator.lock().ok().and_then(|mut acc| acc.push(&mono));
                 if let Some((started_at_ms, samples)) = finished {
-                    if let Some(chunk) = to_chunk(channel_tag, started_at_ms, samples, sample_rate) {
+                    if let Some(chunk) = to_chunk(channel_tag, started_at_ms, samples, sample_rate)
+                    {
                         let _ = tx.send(chunk);
                     }
                 }
@@ -577,7 +635,10 @@ mod tests {
                 break;
             }
         }
-        assert!(result.is_none(), "sub-minimum blip should be dropped, not finalized");
+        assert!(
+            result.is_none(),
+            "sub-minimum blip should be dropped, not finalized"
+        );
     }
 
     #[test]

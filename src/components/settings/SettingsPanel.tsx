@@ -54,6 +54,11 @@ const SECTION_DEFS = [
   { id: "about" as Section, labelKey: "nav.about" as const, icon: Info },
 ];
 
+// Increment when release notes are materially revised without changing the
+// application version. The composite key makes the updated notes appear once
+// for users who already dismissed an earlier 0.8.8 changelog.
+const WHATS_NEW_REVISION = "2026-08-24";
+
 function SettingsPanelInner() {
   const [section, setSection] = useState<Section>("general");
   const [updateAvailable, setUpdateAvailable] = useState(false);
@@ -79,12 +84,13 @@ function SettingsPanelInner() {
 
     async function checkWhatsNew() {
       try {
-        const [currentVersion, lastWhatsNew] = await Promise.all([
+        const [currentVersion, lastWhatsNewRelease] = await Promise.all([
           getVersion(),
-          getSetting<string>("lastWhatsNewVersion"),
+          getSetting<string>("lastWhatsNewRelease"),
         ]);
+        const currentRelease = `${currentVersion}:${WHATS_NEW_REVISION}`;
         const isDev = import.meta.env.DEV;
-        if (!isDev && lastWhatsNew === currentVersion) {
+        if (!isDev && lastWhatsNewRelease === currentRelease) {
           whatsNewChecked.current = true;
           return;
         }
@@ -210,7 +216,13 @@ function SettingsPanelInner() {
           version={whatsNew.version}
           changelog={whatsNew.changelog}
           onDismiss={() => {
-            setSetting("lastWhatsNewVersion", whatsNew.version);
+            void Promise.all([
+              setSetting("lastWhatsNewVersion", whatsNew.version),
+              setSetting(
+                "lastWhatsNewRelease",
+                `${whatsNew.version}:${WHATS_NEW_REVISION}`,
+              ),
+            ]);
             setWhatsNew(null);
           }}
         />

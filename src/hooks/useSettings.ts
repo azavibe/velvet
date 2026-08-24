@@ -16,6 +16,7 @@ import type { EnhancementIntensity } from "@/config/prompts";
 import type { DictionaryEntry } from "@/models/dictionary";
 import { DEFAULT_PERSONAS, type Persona } from "@/models/persona";
 import { replaceIfDeprecated } from "@/models/deprecatedModels";
+import { startupMark } from "@/services/startupDiagnostics";
 
 export interface Settings {
   // Transcription
@@ -170,6 +171,10 @@ export function useSettings() {
     let cancelled = false;
 
     async function load() {
+      startupMark("settings load started", {
+        store_keys: STORE_KEYS.length,
+        providers: API_PROVIDERS.length,
+      });
       // Fetch store-backed settings in parallel
       const storeResults = await Promise.all(
         STORE_KEYS.map((key) => getSetting<Settings[typeof key]>(key)),
@@ -263,6 +268,7 @@ export function useSettings() {
 
       setSettings(resolved);
       setLoaded(true);
+      startupMark("settings load complete", { configured_api_keys: apiKeys.filter(Boolean).length });
     }
 
     load();

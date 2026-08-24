@@ -1,3 +1,4 @@
+pub(crate) mod archive;
 pub mod conversation;
 pub mod note_capture;
 pub mod recorder;

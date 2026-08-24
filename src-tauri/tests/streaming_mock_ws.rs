@@ -1,15 +1,19 @@
 //! Integration tests for the realtime streaming client against a mock WS server.
 //! No network calls; everything runs on localhost.
 
-use std::net::SocketAddr;
 use futures_util::{SinkExt, StreamExt};
+use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::Message;
 
-use whisperi_lib::transcription::streaming::{SessionConfig, StreamingEvent, StreamingTranscriber, ErrorKind};
+use whisperi_lib::transcription::streaming::providers::{
+    AuthScheme, OPENAI_REALTIME, ProviderConfig, VadMode,
+};
 use whisperi_lib::transcription::streaming::realtime_openai_compatible::RealtimeOpenAiCompatibleClient;
-use whisperi_lib::transcription::streaming::providers::{ProviderConfig, AuthScheme, VadMode, OPENAI_REALTIME};
+use whisperi_lib::transcription::streaming::{
+    ErrorKind, SessionConfig, StreamingEvent, StreamingTranscriber,
+};
 
 /// Spin up a one-shot mock WS server. The handler receives the connection
 /// and runs the provided fn; on its first call to listener.accept() the
@@ -61,7 +65,10 @@ async fn happy_path_completed_event_propagates() {
 
     let event = client.poll_event().await.unwrap().unwrap();
     match event {
-        StreamingEvent::UtteranceCompleted { text, utterance_seq } => {
+        StreamingEvent::UtteranceCompleted {
+            text,
+            utterance_seq,
+        } => {
             assert_eq!(text, "hello there");
             assert_eq!(utterance_seq, 1);
         }
@@ -140,7 +147,8 @@ async fn auth_failure_emits_auth_failed_error() {
     let addr = mock_server(|mut ws| async move {
         let _ = ws.next().await; // consume session.update
         ws.send(Message::Text(
-            r#"{"type":"error","error":{"message":"bad key","code":"invalid_api_key"}}"#.to_string(),
+            r#"{"type":"error","error":{"message":"bad key","code":"invalid_api_key"}}"#
+                .to_string(),
         ))
         .await
         .unwrap();

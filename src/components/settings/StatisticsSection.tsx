@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Copy, Trash2, ChevronDown, Mic, MessagesSquare, NotebookPen, Pencil, Sparkles, Mic2 } from "lucide-react";
 import {
@@ -15,6 +15,8 @@ import {
   requestNoteAppend,
   showConversationWindow,
   setClipboardText,
+  onAudioRecoveryComplete,
+  onAudioRecoveryFailed,
   type StatsPayload,
   type Transcription,
   type ConversationSummary,
@@ -23,6 +25,11 @@ import {
 import { SettingsSection } from "@/components/ui/SettingsSection";
 import { Button } from "@/components/ui/button";
 import type { Settings } from "@/hooks/useSettings";
+import { HistoryAudioControls } from "@/components/settings/HistoryAudioControls";
+import { audioPlaybackController } from "@/services/audioPlayback";
+import { useAudioPlayback } from "@/services/useAudioPlayback";
+import { startupMark } from "@/services/startupDiagnostics";
+import { mergeUniqueById, uniqueHistoryItems } from "@/components/settings/historyList";
 
 type Loaded = { today: StatsPayload; week: StatsPayload; all: StatsPayload };
 
@@ -142,6 +149,7 @@ function MarkdownLite({ text }: { text: string }) {
 
 export default function StatisticsSection({ settings, toast }: { settings: Settings; toast?: ToastFn }) {
   const { t } = useTranslation();
+  const playback = useAudioPlayback();
   const [stats, setStats] = useState<Loaded | null>(null);
   const [statsError, setStatsError] = useState<string | null>(null);
 
@@ -156,6 +164,13 @@ export default function StatisticsSection({ settings, toast }: { settings: Setti
   const [hasMoreN, setHasMoreN] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
+  const [historyRefreshToken, setHistoryRefreshToken] = useState(0);
+  const firstHistoryQueryRef = useRef(false);
+  const loadInFlightRef = useRef(false);
+  const queuedReloadRef = useRef(false);
+  const historyRequestGenerationRef = useRef(0);
+  const mountedRef = useRef(true);
+  const loadMoreRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<Record<string, string>>({});
@@ -163,6 +178,15 @@ export default function StatisticsSection({ settings, toast }: { settings: Setti
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<{ title: string; transcript: string }>({ title: "", transcript: "" });
   const [cleaningUpId, setCleaningUpId] = useState<string | null>(null);
+
+  useEffect(() => () => audioPlaybackController.stop(), []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -183,42 +207,110 @@ export default function StatisticsSection({ settings, toast }: { settings: Setti
     };
   }, []);
 
+  useEffect(() => {
+    const cancelledForRecovery = { current: false };
+    const unlistenComplete = onAudioRecoveryComplete((report) => {
+      if (cancelledForRecovery.current) return;
+      startupMark("audio recovery event received", {
+        checked: report.checked,
+        ready: report.ready,
+        missing: report.missing,
+        failed: report.failed,
+      });
+      audioPlaybackController.stop();
+      historyRequestGenerationRef.current += 1;
+      if (loadInFlightRef.current) queuedReloadRef.current = true;
+      setTranscriptions([]);
+      setConversations([]);
+      setNotes([]);
+      setTOffset(0);
+      setCOffset(0);
+      setNOffset(0);
+      setHasMoreT(true);
+      setHasMoreC(true);
+      setHasMoreN(true);
+      setListError(null);
+      setHistoryRefreshToken((token) => token + 1);
+    });
+    const unlistenFailed = onAudioRecoveryFailed(() => {
+      if (cancelledForRecovery.current) return;
+      startupMark("audio recovery event failed");
+      setListError(t("history.audioRecoveryFailed"));
+    });
+    return () => {
+      cancelledForRecovery.current = true;
+      unlistenComplete.then((unlisten) => unlisten());
+      unlistenFailed.then((unlisten) => unlisten());
+    };
+  }, [t]);
+
   const loadMore = async () => {
+    if (loadInFlightRef.current) {
+      // React StrictMode can invoke the initial effect twice. Ignore that
+      // second request; only a recovery-triggered reload is queued.
+      if (historyRefreshToken > 0) queuedReloadRef.current = true;
+      return;
+    }
+    loadInFlightRef.current = true;
+    const requestGeneration = historyRequestGenerationRef.current;
+    const requestedOffsets = { t: tOffset, c: cOffset, n: nOffset };
+    const requestedMore = { t: hasMoreT, c: hasMoreC, n: hasMoreN };
+    if (!firstHistoryQueryRef.current) {
+      firstHistoryQueryRef.current = true;
+      startupMark("first History/Notes query started");
+    }
     setLoadingMore(true);
     setListError(null);
     try {
       const [nextT, nextC, nextN] = await Promise.all([
-        hasMoreT ? getTranscriptions(PAGE_SIZE, tOffset) : Promise.resolve([]),
-        hasMoreC ? listConversations(PAGE_SIZE, cOffset) : Promise.resolve([]),
-        hasMoreN ? listNotes(PAGE_SIZE, nOffset) : Promise.resolve([]),
+        requestedMore.t ? getTranscriptions(PAGE_SIZE, requestedOffsets.t) : Promise.resolve([]),
+        requestedMore.c ? listConversations(PAGE_SIZE, requestedOffsets.c) : Promise.resolve([]),
+        requestedMore.n ? listNotes(PAGE_SIZE, requestedOffsets.n) : Promise.resolve([]),
       ]);
+      if (requestGeneration !== historyRequestGenerationRef.current) return;
       if (nextT.length > 0) {
-        setTranscriptions((prev) => [...prev, ...nextT]);
+        setTranscriptions((prev) => mergeUniqueById(prev, nextT));
         setTOffset((o) => o + nextT.length);
       }
       if (nextT.length < PAGE_SIZE) setHasMoreT(false);
       if (nextC.length > 0) {
-        setConversations((prev) => [...prev, ...nextC]);
+        setConversations((prev) => mergeUniqueById(prev, nextC));
         setCOffset((o) => o + nextC.length);
       }
       if (nextC.length < PAGE_SIZE) setHasMoreC(false);
       if (nextN.length > 0) {
-        setNotes((prev) => [...prev, ...nextN]);
+        setNotes((prev) => mergeUniqueById(prev, nextN));
         setNOffset((o) => o + nextN.length);
       }
       if (nextN.length < PAGE_SIZE) setHasMoreN(false);
+      startupMark("History/Notes query complete", {
+        dictations: nextT.length,
+        conversations: nextC.length,
+        notes: nextN.length,
+      });
     } catch (e) {
-      setListError(e instanceof Error ? e.message : String(e));
+      if (requestGeneration === historyRequestGenerationRef.current) {
+        setListError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
+      loadInFlightRef.current = false;
       setLoadingMore(false);
+      if (queuedReloadRef.current) {
+        queuedReloadRef.current = false;
+        window.setTimeout(() => {
+          if (mountedRef.current) void loadMoreRef.current();
+        }, 0);
+      }
     }
   };
 
+  loadMoreRef.current = loadMore;
+
   useEffect(() => {
     loadMore();
-    // Only on mount — subsequent pages come from the "Load more" button.
+    // The recovery event increments the token after clearing the old page.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [historyRefreshToken]);
 
   const items = useMemo<HistoryItem[]>(() => {
     const merged: HistoryItem[] = [
@@ -242,14 +334,16 @@ export default function StatisticsSection({ settings, toast }: { settings: Setti
       })),
     ];
     merged.sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
-    return merged;
+    return uniqueHistoryItems(merged);
   }, [transcriptions, conversations, notes]);
 
   const toggleExpand = async (item: HistoryItem) => {
     if (expandedId === item.id) {
+      playback.stop();
       setExpandedId(null);
       return;
     }
+    playback.stop();
     setExpandedId(item.id);
     setEditingId(null);
     if (item.kind === "conversation" && !(item.id in expandedDetail)) {
@@ -286,6 +380,7 @@ export default function StatisticsSection({ settings, toast }: { settings: Setti
 
   const handleDelete = async (item: HistoryItem) => {
     try {
+      if (playback.key?.startsWith(`${item.id}:`)) playback.stop();
       if (item.kind === "dictation") {
         await deleteTranscription(item.data.id);
         setTranscriptions((prev) => prev.filter((tr) => tr.id !== item.data.id));
@@ -506,6 +601,18 @@ export default function StatisticsSection({ settings, toast }: { settings: Setti
                           {fullText(item) || t("history.emptyTranscript")}
                         </p>
                       )}
+
+                      <HistoryAudioControls
+                        itemKey={item.id}
+                        playback={playback}
+                        dictation={item.kind === "dictation" ? item.data.audio_asset : undefined}
+                        conversation={
+                          item.kind === "conversation"
+                            ? { me: item.data.audio_asset_me, them: item.data.audio_asset_them }
+                            : undefined
+                        }
+                        noteSegments={item.kind === "note" ? item.data.audio_segments : undefined}
+                      />
 
                       {!isEditing && (
                         <div className="flex items-center justify-end gap-2 flex-wrap">

@@ -47,11 +47,7 @@ fn is_dictionary_echo(text: &str, prompt: &str) -> bool {
 ///
 /// - Full echo (all words from prompt): return empty string (silence detected)
 /// - Prefix echo (text starts with prompt word sequence): strip the prefix
-pub fn strip_prompt_echo(
-    text: &str,
-    prompt: Option<&str>,
-    protected_terms: &[String],
-) -> String {
+pub fn strip_prompt_echo(text: &str, prompt: Option<&str>, protected_terms: &[String]) -> String {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return String::new();
@@ -208,18 +204,29 @@ pub fn strip_dictionary_edge_echo(
 pub fn log_transcription_result(provider: &str, text: &str, prompt: Option<&str>) {
     let trimmed = text.trim();
     if trimmed.is_empty() {
-        log::warn!("[Whisperi] {} transcription: empty (no voice detected)", provider);
+        log::warn!(
+            "[Whisperi] {} transcription: empty (no voice detected)",
+            provider
+        );
     } else if let Some(p) = prompt {
         if !p.is_empty() && is_dictionary_echo(trimmed, p) {
             log::warn!(
-                "[Whisperi] {} transcription: \"{}\" (dictionary echo, no voice detected)",
-                provider, trimmed
+                "[Whisperi] {} transcription matched its prompt vocabulary (possible silence)",
+                provider
             );
         } else {
-            log::info!("[Whisperi] {} transcription: \"{}\" ({} chars)", provider, trimmed, trimmed.len());
+            log::info!(
+                "[Whisperi] {} transcription complete ({} chars)",
+                provider,
+                trimmed.len()
+            );
         }
     } else {
-        log::info!("[Whisperi] {} transcription: \"{}\" ({} chars)", provider, trimmed, trimmed.len());
+        log::info!(
+            "[Whisperi] {} transcription complete ({} chars)",
+            provider,
+            trimmed.len()
+        );
     }
 }
 
@@ -236,6 +243,7 @@ pub async fn transcribe_openai(
     language: Option<&str>,
     prompt: Option<&str>,
     base_url: Option<&str>,
+    temperature: Option<f32>,
 ) -> Result<CloudTranscription> {
     let url = format!(
         "{}/audio/transcriptions",
@@ -268,6 +276,9 @@ pub async fn transcribe_openai(
         if !p.is_empty() {
             form = form.text("prompt", p.to_string());
         }
+    }
+    if let Some(value) = temperature {
+        form = form.text("temperature", value.to_string());
     }
 
     log::info!("[Whisperi] POST {}", url);
@@ -336,6 +347,7 @@ pub async fn transcribe_groq(
     model: &str,
     language: Option<&str>,
     prompt: Option<&str>,
+    temperature: Option<f32>,
 ) -> Result<CloudTranscription> {
     transcribe_openai(
         audio_data,
@@ -344,6 +356,7 @@ pub async fn transcribe_groq(
         language,
         prompt,
         Some("https://api.groq.com/openai/v1"),
+        temperature,
     )
     .await
 }
@@ -396,7 +409,9 @@ pub async fn transcribe_qwen(
         stream: false,
     };
 
-    log::info!("[Whisperi] POST https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions");
+    log::info!(
+        "[Whisperi] POST https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
+    );
     let response = crate::http::HTTP_CLIENT
         .post("https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions")
         .bearer_auth(api_key)
@@ -423,6 +438,8 @@ struct OpenRouterAsrRequest {
     model: String,
     modalities: Vec<String>,
     messages: Vec<OpenRouterAsrMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
 }
 
 #[derive(Serialize)]
@@ -438,6 +455,7 @@ pub async fn transcribe_openrouter(
     model: &str,
     language: Option<&str>,
     prompt: Option<&str>,
+    temperature: Option<f32>,
 ) -> Result<CloudTranscription> {
     log::info!(
         "[Whisperi] OpenRouter transcription: model={}, audio={} bytes ({:.1} KB base64)",
@@ -477,6 +495,7 @@ pub async fn transcribe_openrouter(
             role: "user".to_string(),
             content,
         }],
+        temperature,
     };
 
     log::info!("[Whisperi] POST https://openrouter.ai/api/v1/chat/completions (transcription)");
@@ -489,7 +508,8 @@ pub async fn transcribe_openrouter(
         .send()
         .await?;
 
-    let response = crate::http::check_response(response, "OpenRouter transcription API error").await?;
+    let response =
+        crate::http::check_response(response, "OpenRouter transcription API error").await?;
 
     let result: crate::http::ChatCompletionsResponse = response.json().await?;
     let text = result.text();
@@ -508,6 +528,7 @@ pub async fn transcribe_mistral(
     model: &str,
     language: Option<&str>,
     prompt: Option<&str>,
+    temperature: Option<f32>,
 ) -> Result<CloudTranscription> {
     transcribe_openai(
         audio_data,
@@ -516,6 +537,7 @@ pub async fn transcribe_mistral(
         language,
         prompt,
         Some("https://api.mistral.ai/v1"),
+        temperature,
     )
     .await
 }
@@ -533,11 +555,26 @@ mod tests {
 
     #[test]
     fn normalize_provider_language_full_names_to_codes() {
-        assert_eq!(normalize_provider_language(Some("chinese")), Some("zh".into()));
-        assert_eq!(normalize_provider_language(Some("Chinese")), Some("zh".into()));
-        assert_eq!(normalize_provider_language(Some("English")), Some("en".into()));
-        assert_eq!(normalize_provider_language(Some("Japanese")), Some("ja".into()));
-        assert_eq!(normalize_provider_language(Some("mandarin")), Some("zh".into()));
+        assert_eq!(
+            normalize_provider_language(Some("chinese")),
+            Some("zh".into())
+        );
+        assert_eq!(
+            normalize_provider_language(Some("Chinese")),
+            Some("zh".into())
+        );
+        assert_eq!(
+            normalize_provider_language(Some("English")),
+            Some("en".into())
+        );
+        assert_eq!(
+            normalize_provider_language(Some("Japanese")),
+            Some("ja".into())
+        );
+        assert_eq!(
+            normalize_provider_language(Some("mandarin")),
+            Some("zh".into())
+        );
     }
 
     #[test]
@@ -673,12 +710,23 @@ mod tests {
             "CLAUDE"
         );
         assert_eq!(
-            strip_prompt_echo(
-                "Whisperi CLAUDE",
-                Some("Whisperi CLAUDE"),
-                &protected
-            ),
+            strip_prompt_echo("Whisperi CLAUDE", Some("Whisperi CLAUDE"), &protected),
             ""
+        );
+    }
+
+    #[test]
+    fn cleanup_preserves_a_leading_configured_wake_name_and_command() {
+        let protected = vec!["Agenda".to_string()];
+        let dictionary = vec!["Agenda".to_string(), "Acme".to_string()];
+        let prompt = format!("{} Agenda Acme", crate::transcription::PUNCTUATION_PROMPT);
+        let raw = "Agenda start notes.";
+
+        let prompt_cleaned = strip_prompt_echo(raw, Some(&prompt), &protected);
+        assert_eq!(prompt_cleaned, raw);
+        assert_eq!(
+            strip_dictionary_edge_echo(&prompt_cleaned, &dictionary, &protected),
+            raw
         );
     }
 

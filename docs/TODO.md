@@ -1,5 +1,102 @@
 # TODO
 
+## Conversational assistant roadmap
+
+Detailed [implementation plan](plans/conversational-assistant.md).
+
+### v0.8.9 — Repairs and stabilization
+
+- [x] Repair archived-audio persistence so dictation, conversation, and note recordings have explicit saving, ready, missing, or failed states.
+  - [x] Serialize archive writes and finalization so History cannot observe an incomplete WAV.
+  - [x] Track every note append segment and delete all recordings associated with its source.
+- [ ] Add secure History audio playback for dictations, conversation Me/Them tracks, and note segments.
+  - [x] Support play, pause, resume, seek, restart, stop, duration, and cancellation when switching items.
+  - [x] Restrict WebView/open-file access to validated files under the application recordings directory.
+  - [ ] Complete Windows WebView2 runtime playback and Task Manager memory verification.
+    - [ ] Verify one long note segment and Play All complete without a protocol-thread panic, skip an unavailable segment, and continue in stored segment order.
+    - [ ] Verify dictation, Conversation Me/Them, and note playback starts at byte zero and seeks repeatedly through the middle and near EOF in packaged WebView2.
+    - [ ] Compare SQLite source/asset counts and rendered source IDs before and after repeated Play, Pause, Seek, Restart, Stop, and Play All; confirm sequential range requests remain read-only.
+    - [ ] Measure idle, History-visible, active-playback, and post-stop Windows memory and confirm playback returns close to baseline.
+- [ ] Remove repeated configured-agent wake-word echoes without breaking fuzzy voice commands or legitimate interior mentions.
+- [ ] Diagnose startup lag and ensure archive recovery does not block the interface unnecessarily.
+  - [x] Add development-only timing marks for initialization, migrations, archive recovery, WebView/React startup, shortcut registration, and the first History/Notes query.
+  - [x] Manage the database before the one-time WAV recovery pass and refresh History after explicit recovery completion or failure.
+  - [ ] Measure cold/second development startup and packaged-release startup on Windows before closing the diagnosis.
+- [ ] Fix the global hotkey becoming unresponsive after extended use and window/recording transitions.
+  - [x] Serialize registration, replacement, retry, and cleanup through one lifecycle owner with stable callbacks and duplicate-listener protection.
+  - [x] Surface registration failure through the overlay and cover stale cleanup/retry ordering with regression tests.
+  - [ ] Run the Windows 20-cycle start/stop and panel open/close reliability matrix.
+- [ ] Improve whole-utterance voice-command matching for conservative ASR sound-alikes.
+  - [x] Match configured wake names and aliases with exact preference, short command-scoped tolerance, and privacy-safe exact/fuzzy diagnostics.
+  - [x] Cover reported note variants, Support/Conversation, multilingual greetings, aliases, and false-positive ordinary sentences in regression tests.
+  - [x] Resolve raw ASR through one declarative exact/phonetic command registry before dictionary replacement, enhancement, paste, or History persistence.
+  - [x] Reuse the original recording for at most one bounded command-focused retry with the selected prompt-capable provider/model, deterministic settings, timeout fallback, and no duplicate persistence.
+  - [x] Route Settings/preferences through the durable target-window intent and acknowledgement path without treating addressed questions as application commands.
+  - [x] Keep the configured agent name and aliases out of the normal Whisper context prompt so a spoken leading wake name is not suppressed as repeated prior text.
+  - [x] Recover a provider-elided wake only for sub-six-second exact low-risk command phrases when one retry restores the configured name and the same action; never apply this to Stop.
+  - [x] Drop the confirmed whole-output “How can I assist you today?” Whisper greeting hallucination, including repeated loops.
+  - [ ] Verify the configured-name command matrix on Windows with the reported microphone captures.
+    - [ ] Set the Agent Name preference to Tom and verify “Agent Tom, start note” plus a capture resembling “Thumb, Stark Nose. Thank you” opens Notes exactly once and is not pasted or saved.
+    - [ ] Set the Agent Name preference to Agenda and, in separate recordings, verify the raw result retains the leading name and executes notes, start notes, call, start call, start conversation, support, settings, and open settings, including captures resembling “Agenda Noty” and “Agenda Kolejny.”
+    - [ ] Verify a short capture whose first result loses “Agenda” can recover the same low-risk action once, while bare Stop and a retry that changes actions remain ordinary speech.
+    - [ ] Say only “Agenda” several times and confirm stock “Hello/How can I assist you today?” output is discarded rather than pasted or saved.
+    - [ ] Repeat the command-focused retry with a supported provider and confirm it keeps the selected model; repeat with an unsupported provider and confirm ordinary dictation continues without a second cloud request.
+    - [ ] Confirm “Agenda, what’s your name?”, “what settings do you have?”, and “what agents are available?” remain non-command conversational candidates.
+    - [ ] Repeat the matrix with the target window initially absent, already open, and slow to mount; confirm each intent is acknowledged exactly once.
+    - [ ] Change the configured agent name and aliases at runtime, then run two commands in close succession and repeat a completed command.
+    - [ ] Confirm each consumed command opens/focuses the intended mode/persona, starts or requests the intended capture, and is not pasted or saved as ordinary dictation.
+- [ ] Reduce the floating agent icon by 30%, remove its white stroke, and add lightweight active-state animation.
+  - [x] Reduce the visible circle to 32px inside a 44px target, remove the border, and add recording/processing/error phases with reduced-motion CSS.
+  - [ ] Complete Windows visual, CPU, and RAM verification for idle, recording, processing, and error states.
+    - [ ] Verify light and dark backgrounds show exactly one 32px visible circle and no border, stroke, or transparent 44px ring.
+    - [ ] Verify the clipped recording smoke is centered on the microphone circle and remains centered while dragging the overlay.
+    - [ ] Verify processing uses the compact horizontal pulse without spinning/orbiting layers and stops all motion when idle or reduced motion is enabled.
+- [ ] Rebrand the application from Whisperi to Agenda without losing existing user data or installer continuity.
+  - [ ] Audit visible branding, package metadata, installer names, window titles, tray text, locales, documentation, and logs.
+  - [ ] Preserve or migrate legacy database, recordings, settings, API keys, updater identity, and application-data paths.
+  - [ ] Preserve the original MIT license and upstream attribution.
+  - [ ] Verify upgrade installation from v0.8.8 and first-run migration on Windows.
+
+### v0.9.0 — Direct conversation and text-to-speech
+
+- [ ] Route non-command speech addressed to the configured agent into persistent direct conversation turns.
+  - [ ] Reuse the existing conversation tables, reasoning settings, Conversation window, personas, and history.
+  - [ ] Persist raw user text, reconciled user text, and assistant answers without creating duplicate transcription history.
+  - [ ] Keep ordinary dictation pasting and whole-utterance voice commands unchanged.
+- [ ] Add OpenRouter TTS using the existing API key and the default Qwen Audio 3.0 TTS Flash model.
+  - [ ] Add a small Conversations-area TTS toggle/model setting with cached speech-model discovery and custom model support.
+  - [ ] Reuse the History playback layer for MP3 playback and preserve visible text when synthesis fails.
+- [ ] Add interruption and stale-result protection for direct answers and TTS.
+  - [ ] Stop speech immediately when new user recording begins.
+  - [ ] Prevent synthesized speaker output from becoming a new voice command or user turn.
+- [ ] Extend Conversation to speakerphone and in-room calls without adding another capture mode.
+  - [ ] Treat silent-loopback sessions as mixed microphone audio instead of labeling every speaker “Me.”
+  - [ ] Accept configured-agent commands such as “start call” and “call” as Conversation aliases.
+  - [ ] Automatically structure support-call cleanup around instructions, forms, payments, contacts, deadlines, and unresolved questions.
+  - [ ] Reuse the existing conversation, audio, history, cleanup, persona, and suggestion infrastructure.
+
+### v0.9.x — Automatic contextual speech correction
+
+- [ ] Add conservative post-ASR reconciliation before command detection, enhancement, persistence, and direct reasoning.
+  - [ ] Use language, current context, recent utterances, dictionary terms, known entities, and repeated high-confidence evidence.
+  - [ ] Preserve raw ASR beside reconciled text and fall back safely on uncertainty or provider failure.
+  - [ ] Promote only repeated consistent corrections and reduce confidence after contradiction or inactivity.
+- [ ] Make contextual correction reversible, bounded, debuggable, and separate from normal prose enhancement.
+
+### v0.10.0 — Long-term memory and knowledge
+
+- [ ] Add a minimal SQLite-backed memory layer for entities, aliases, facts, relationships, sources, confidence, and contradiction state.
+  - [ ] Extract memory automatically after completed turns, notes, and conversations without making ambiguous content permanent.
+  - [ ] Retrieve only bounded recent context, rolling summaries, relevant SQLite results, aliases, recency, confidence, persona, and topic.
+  - [ ] Remove or downgrade source-dependent memory when its dictation, note, or conversation is deleted.
+- [ ] Add an automatic-memory toggle and reset action without introducing a graph editor or training interface.
+
+### Future — Disclosed meeting participation
+
+- [ ] Design a separate, explicitly disclosed meeting-participant mode compatible with existing microphone/loopback capture, two-channel transcripts, personas, suggestions, TTS, and barge-in.
+  - [ ] Define participant consent, visible listening/speaking state, AI-voice disclosure, meeting context, summaries, decisions, and tasks.
+  - [ ] Evaluate virtual microphones for Zoom/Teams only after the disclosed interaction model is approved.
+
 ## Live mode stabilization
 
 - [ ] Remove "(Beta)" label after 2 consecutive minor releases with zero Live-mode-related issues + multi-provider validation.
