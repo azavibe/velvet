@@ -6,15 +6,10 @@
 
 ### Highlights
 
-- New Conversations feature: a live copilot for calls, in its own resizable, always-on-top panel. Open it from the tray/overlay right-click menu or Settings → Conversations, pick a persona, hit Start — it listens to both you and the other side, transcribes both separately in real time, and suggests what to say next right there
-- Suggestions come from a persona — a short system prompt with a name. Five are included (Meeting, Sales, Support, Language practice, Interview prep) and you can write your own
-- Choose whether suggestions appear automatically whenever the other side stops talking, or only on demand. Reuses your existing dictation hotkey — press it during a conversation to force a suggestion instead of starting dictation, since you're never doing both at once
-- Suggestions use their own model, independent of the Enhancement model — pick a different (or pricier) one without it affecting dictation, and it still works even with Enhancement turned off
-- Conversation history moved out of Settings → Conversations and into History & Analytics, so dictations, conversations, and notes all live in one list instead of three places
-- Settings → Statistics is now History & Analytics: your usage stats plus every dictation and conversation as a card (date, duration, type, a snippet), expandable to the full transcript, with Copy and Delete (which also removes the saved audio) on each one
-- Audio is now saved alongside every transcript by default — one file per dictation, one per side of a conversation — so you can revisit or copy from a session later, not just its text
-- The agent now *does* things, not just answers: say "Aral, start notes", "Aral, start conversation", "Aral, support" (any persona name), or "Aral, stop" during dictation and the app acts on it instead of typing it out. A command has to be the whole utterance — "Aral, start notes with the following headings" is still a question for the agent, and ordinary dictation like "let's start a conversation about the roadmap" is untouched. Commands are listed in Settings → Agent
-- New Notes: mic-only capture in the Conversation window — pick "Take Note" from its persona dropdown instead of a persona. Start, pause (mic stops being captured entirely, not just skipped by silence detection), resume, and keep talking across as many pauses as you like, all as one note. From History, run an opt-in AI Markdown cleanup pass on a note, edit its text inline, or resume capture into it later with "Append Dictation"
+- New Conversations and Notes capture live speech in a dedicated panel, with configurable personas, separate Me/Them transcripts, pause-and-resume notes, and on-demand or automatic suggestions.
+- History & Analytics now keeps dictations, conversations, and ordered note segments together, with safer archived-audio lifecycle tracking and low-memory playback controls ready for Windows verification.
+- Voice commands use your configured agent name and aliases, recover a bounded set of short ASR mistakes, and can open Notes, Conversation, Support, and Settings without pasting the command as dictation.
+- Startup recovery, the global dictation hotkey, and the floating microphone overlay were stabilized; the overlay is smaller, centered, and clearly distinguishes recording, processing, and error states.
 
 ### How it works
 
@@ -32,6 +27,11 @@
 
 ### Fixes
 
+- Archived recordings now have durable saving, ready, missing, and failed states. WAV files are finalized before they become playable, note append segments retain their order, and validated deletion removes every recording owned by a History source.
+- History playback uses one lazy global HTML audio element and an ID-backed, range-capable Tauri protocol. Bounded media responses avoid loading whole recordings into memory, and malformed or oversized range requests no longer panic the protocol thread.
+- Global-shortcut registration now has stable ownership across React renders and window changes, with shared click/hotkey recording transitions and visible registration failures.
+- Voice-command dispatch now creates a durable pending intent before showing a target window and waits for acknowledgement after the target is ready. The resolver reads the current configured agent name and aliases, runs before enhancement or dictionary replacement, and performs at most one command-focused retry for plausible short commands.
+- The floating microphone keeps an invisible 44×44 accessible target around one visible 32×32 circle. Recording effects are centered and clipped inside it, processing uses a compact horizontal pulse, and reduced-motion mode disables animation.
 - The Conversation window's capability wasn't registered for that window, so it silently had no permission to drag-move, minimize, close, or receive any live event — it could only resize, and would sit on "Listening…" forever even though transcription was running, because the events carrying transcript/suggestions/errors never reached it. The window can now be moved, minimized, and closed normally, and transcript/suggestions arrive live
 - Fixed transcription and notes appearing to stop after the first sentence or two even while still talking: the live-event listeners were re-registered on every incoming utterance (because the toast callback passed in had a new identity each render), and an event landing during that async re-registration gap was silently dropped. Listener wiring is now stable across renders regardless of what the caller passes for `onToast`
 - Added a pin toggle to the Conversation window's titlebar to drop always-on-top once it's positioned where you want it, without closing it

@@ -6,30 +6,51 @@ import { Menu, MenuItem, PredefinedMenuItem } from "@tauri-apps/api/menu";
 import { getVersion } from "@tauri-apps/api/app";
 import { check } from "@tauri-apps/plugin-updater";
 import { sendNotification } from "@tauri-apps/plugin-notification";
-import { Mic } from "lucide-react";
+import { AlertTriangle, Mic } from "lucide-react";
 import { useDictation } from "@/hooks/useDictation";
 import { useSettings } from "@/hooks/useSettings";
 import { useHotkey } from "@/hooks/useHotkey";
 import { useConversation } from "@/hooks/useConversation";
 import { LoadingDots } from "@/components/ui/LoadingDots";
+import { getOverlayMotionMode, getOverlayVisualPhase } from "@/components/overlayState";
+import { whatsNewReleaseKey } from "@/config/whatsNew";
 import {
   showSettings,
   showConversationWindow,
   quitApp,
   getSetting,
   setSetting,
-  requestConversationStart,
-  requestNoteStart,
-  requestCaptureStop,
 } from "@/services/tauriApi";
-import { detectVoiceCommand } from "@/config/voiceCommands";
+import { dispatchCompletedVoiceCommand } from "@/services/voiceCommandDispatch";
+
+function safeVoiceCommandError(error: unknown): string {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  const code = message.split(/[\s:]/, 1)[0] ?? "";
+  return /^[a-z0-9_:-]{1,80}$/i.test(code) ? code : "dispatch_failed";
+}
 
 function DictationOverlayInner() {
   const { t } = useTranslation();
+  const [overlayError, setOverlayError] = useState(false);
+  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showOverlayError = useCallback(() => {
+    setOverlayError(true);
+    if (errorTimerRef.current !== null) clearTimeout(errorTimerRef.current);
+    errorTimerRef.current = setTimeout(() => {
+      errorTimerRef.current = null;
+      setOverlayError(false);
+    }, 5000);
+  }, []);
+
+  useEffect(() => () => {
+    if (errorTimerRef.current !== null) clearTimeout(errorTimerRef.current);
+  }, []);
+
   // Use native OS notifications instead of in-window toasts (overlay is too small)
   const notifyError = useCallback((props: { title?: string; description?: string }) => {
+    showOverlayError();
     sendNotification({ title: props.title ?? t("overlay.notification.title"), body: props.description ?? "" });
-  }, [t]);
+  }, [showOverlayError, t]);
 
   const { settings, loaded } = useSettings();
 
@@ -39,38 +60,55 @@ function DictationOverlayInner() {
   // consent gate, and persona selection, so a voice-started conversation
   // goes through exactly the same path as a clicked one.
   const handleVoiceCommand = useCallback(
-    async (text: string): Promise<boolean> => {
-      const command = detectVoiceCommand(
-        text,
-        settings.agentName,
-        settings.agentAliases,
-        settings.personas,
-      );
-      if (!command) return false;
-
+    async (
+      text: string,
+      context: {
+        agentName: string;
+        agentAliases: string[];
+        retryTranscription: (prompt: string) => Promise<string | null>;
+        applicationLanguage: string | null;
+        durationMs: number | null;
+      },
+    ): Promise<boolean> => {
+      const diagnosticsEnabled = import.meta.env.DEV;
       try {
-        if (command.kind === "stop") {
-          await requestCaptureStop();
-          return true;
-        }
-        await showConversationWindow();
-        if (command.kind === "start-note") {
-          await requestNoteStart();
-        } else {
-          await requestConversationStart(command.personaId);
-        }
-        return true;
+        const result = await dispatchCompletedVoiceCommand(
+          text,
+          context.agentName,
+          context.agentAliases,
+          settings.personas,
+          undefined,
+          diagnosticsEnabled
+            ? (event) => console.debug("[voice-command]", event)
+            : undefined,
+          context.retryTranscription,
+          context.applicationLanguage ?? undefined,
+          context.durationMs !== null && context.durationMs <= 6_000,
+        );
+        return result.handled;
       } catch (e) {
-        notifyError({ description: String(e) });
+        if (diagnosticsEnabled) {
+          console.debug("[voice-command] dispatch failed", {
+            reason: safeVoiceCommandError(e),
+          });
+        }
+        notifyError({ description: safeVoiceCommandError(e) });
         // Handled (and reported) — falling through to paste would type the
         // command into whatever window is focused, which is worse.
         return true;
       }
     },
-    [settings.agentName, settings.agentAliases, settings.personas, notifyError],
+    [settings.personas, notifyError],
   );
 
-  const { phase, isRecording, isProcessing, audioLevel, start, stop, toggle, cancel } =
+  const handleHotkeyRegistrationError = useCallback(() => {
+    notifyError({
+      title: t("overlay.error"),
+      description: t("overlay.hotkeyRegistrationFailed"),
+    });
+  }, [notifyError, t]);
+
+  const { phase, isRecording, isProcessing, start, stop, toggle, cancel } =
     useDictation({ onToast: notifyError, onVoiceCommand: handleVoiceCommand });
 
   // Lightweight instance — no transcript/suggestion state, autoTrigger off
@@ -105,10 +143,11 @@ function DictationOverlayInner() {
     }
     (async () => {
       try {
-        const [currentVersion, lastSeen, openAfterUpdate] = await Promise.all([
+        const [currentVersion, lastSeen, openAfterUpdate, lastWhatsNewRelease] = await Promise.all([
           getVersion(),
           getSetting<string>("lastSeenVersion"),
           getSetting<boolean>("openSettingsAfterUpdate"),
+          getSetting<string>("lastWhatsNewRelease"),
         ]);
         let needsSettings = false;
         const isDev = import.meta.env.DEV;
@@ -118,6 +157,9 @@ function DictationOverlayInner() {
         }
         if (openAfterUpdate) {
           setSetting("openSettingsAfterUpdate", false);
+          needsSettings = true;
+        }
+        if (lastWhatsNewRelease !== whatsNewReleaseKey(currentVersion)) {
           needsSettings = true;
         }
         if (needsSettings) showSettings();
@@ -168,6 +210,7 @@ function DictationOverlayInner() {
       if (conversation.isActive) return; // avoid a second call on release
       stop();
     },
+    onRegistrationError: handleHotkeyRegistrationError,
     enabled: loaded && !!settings.dictationKey && !hotkeyCapturing,
   });
 
@@ -243,78 +286,124 @@ function DictationOverlayInner() {
     }
   }, [phase, start, stop, settings.selectedMicDeviceId]);
 
-  // Audio level visualization — scale the button ring
-  const levelScale = 1 + audioLevel * 0.3;
+  const visualPhase = getOverlayVisualPhase(phase, overlayError);
+  const showError = visualPhase === "error";
+  const motionMode = getOverlayMotionMode(visualPhase, false);
 
   return (
     <>
-    <style>{`
-      @keyframes pulse-mic {
-        0%, 100% { transform: scale(1); opacity: 1; }
-        50% { transform: scale(1.15); opacity: 0.7; }
-      }
-      @keyframes breathe {
-        0%, 100% { transform: scale(1); }
-        50% { transform: scale(1.05); }
-      }
-    `}</style>
-    <div
-      className="dictation-window flex flex-col items-center justify-center h-screen pointer-events-none"
-    >
-      {/* Button area */}
-      <div className="relative flex items-center justify-center pointer-events-auto" onContextMenu={handleContextMenu}>
-        {/* Outer glow ring for audio level */}
-        <div
-          className="absolute transition-transform duration-75"
-          style={{
-            width: "3.5rem",
-            height: "3.5rem",
-            borderRadius: "50%",
-            transform: `scale(${isRecording ? levelScale : 1})`,
-            background: isRecording
-              ? `radial-gradient(circle, hsl(312, 100%, 58%, ${0.2 + audioLevel * 0.3}), transparent 70%)`
-              : "transparent",
-          }}
-        />
-
-        {/* Main button */}
-        <button
-          onPointerDown={handleButtonPointerDown}
-          onPointerMove={handleButtonPointerMove}
-          onPointerUp={handleButtonPointerUp}
-          disabled={isProcessing}
-          style={!isRecording && !isProcessing ? { animation: "breathe 3s ease-in-out infinite" } : undefined}
-          className={`relative w-12 h-12 rounded-full border-2 transition-all duration-200 ${
-            isProcessing
-              ? "bg-surface-1 border-foreground/30 cursor-wait shadow-md shadow-black/50"
-              : isRecording
-                ? "bg-recording border-foreground-bright shadow-lg shadow-recording/40"
-                : "bg-primary border-foreground-bright/80 shadow-md shadow-black/50 hover:border-foreground-bright hover:shadow-lg hover:shadow-primary/40 active:scale-95"
-          }`}
-          aria-label={
-            isProcessing
-              ? t("overlay.processing")
-              : isRecording
-                ? t("overlay.stopRecording")
-                : t("overlay.startRecording")
+      <style>{`
+        @keyframes overlay-listening-smoke {
+          0%, 100% { transform: scale(0.88); opacity: 0.42; }
+          50% { transform: scale(1.08); opacity: 0.78; }
+        }
+        @keyframes overlay-processing-pulse {
+          0%, 100% { transform: translateY(0) scaleY(0.84); opacity: 0.62; }
+          50% { transform: translateY(-1px) scaleY(1.08); opacity: 1; }
+        }
+        .overlay-visible-circle {
+          transform-origin: 50% 50%;
+          isolation: isolate;
+        }
+        .overlay-listening-smoke {
+          background: radial-gradient(
+            circle at 50% 50%,
+            rgba(210, 60, 255, 0.95) 0%,
+            rgba(114, 92, 255, 0.82) 48%,
+            rgba(40, 183, 255, 0.68) 74%,
+            rgba(210, 60, 255, 0.36) 100%
+          );
+          transform-origin: 50% 50%;
+          animation: overlay-listening-smoke 1.6s ease-in-out infinite;
+        }
+        .overlay-processing-surface {
+          background: radial-gradient(
+            circle at 50% 50%,
+            #d23cff 0%,
+            #725cff 58%,
+            #28b7ff 100%
+          );
+        }
+        .overlay-processing-dots > div {
+          animation: overlay-processing-pulse 0.9s ease-in-out infinite;
+        }
+        .overlay-processing-dots > div:nth-child(2) {
+          animation-delay: 0.14s;
+        }
+        .overlay-processing-dots > div:nth-child(3) {
+          animation-delay: 0.28s;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .overlay-listening-smoke,
+          .overlay-processing-dots > div {
+            animation: none !important;
           }
+        }
+      `}</style>
+      <div className="dictation-window flex flex-col items-center justify-center h-screen pointer-events-none">
+        <div
+          className="relative w-11 h-11 flex items-center justify-center pointer-events-auto"
+          onContextMenu={handleContextMenu}
         >
-          <div className="flex items-center justify-center">
-            {isProcessing ? (
-              <LoadingDots />
-            ) : (
-              <Mic
-                className={`w-6 h-6 ${isRecording ? "text-recording-foreground" : "text-foreground-bright"}`}
-                style={isRecording ? { animation: "pulse-mic 1.2s ease-in-out infinite" } : undefined}
-              />
-            )}
-          </div>
-          {updateAvailable && (
-            <span className="absolute top-0.5 right-0.5 w-2.5 h-2.5 rounded-full bg-warning animate-pulse" title={t("overlay.updateAvailable")} />
-          )}
-        </button>
+          <button
+            onPointerDown={handleButtonPointerDown}
+            onPointerMove={handleButtonPointerMove}
+            onPointerUp={handleButtonPointerUp}
+            disabled={isProcessing}
+            data-overlay-hit-target="44px"
+            className={`group relative flex w-11 h-11 items-center justify-center border-0 bg-transparent shadow-none transition-transform duration-200 focus-visible:outline-none ${
+              isProcessing
+                ? "cursor-wait"
+                : isRecording
+                  ? "active:scale-95"
+                  : "hover:scale-105 active:scale-95"
+            }`}
+            aria-label={
+              showError
+                ? t("overlay.error")
+                : isProcessing
+                  ? t("overlay.processing")
+                  : isRecording
+                    ? t("overlay.stopRecording")
+                    : t("overlay.startRecording")
+            }
+          >
+            <span
+              data-overlay-visible-circle="32px"
+              className={`overlay-visible-circle relative flex w-8 h-8 shrink-0 items-center justify-center overflow-hidden rounded-full border-0 shadow-md group-focus-visible:ring-2 group-focus-visible:ring-inset group-focus-visible:ring-ring ${
+                showError
+                  ? "bg-destructive text-destructive-foreground"
+                  : isProcessing
+                    ? "overlay-processing-surface text-foreground-bright"
+                    : isRecording
+                      ? "bg-[#725cff] text-white"
+                      : "bg-primary text-foreground-bright"
+              }`}
+            >
+              {motionMode === "listening" && (
+                <span
+                  data-overlay-internal-effect="centered-clipped"
+                  className="overlay-listening-smoke overlay-motion pointer-events-none absolute inset-0"
+                  aria-hidden="true"
+                />
+              )}
+              {showError ? (
+                <AlertTriangle className="relative z-10 w-4 h-4" aria-hidden="true" />
+              ) : isProcessing ? (
+                <LoadingDots className={motionMode === "processing" ? "overlay-processing-dots overlay-motion" : "overlay-processing-dots"} />
+              ) : (
+                <Mic className="relative z-10 w-4 h-4" aria-hidden="true" />
+              )}
+              {updateAvailable && (
+                <span
+                  className="absolute right-0.5 top-0.5 z-20 w-2 h-2 rounded-full bg-warning"
+                  title={t("overlay.updateAvailable")}
+                />
+              )}
+            </span>
+          </button>
+        </div>
       </div>
-    </div>
     </>
   );
 }

@@ -12,7 +12,16 @@ interface Options {
   /** See useAudioRecording — standard mode only. Live mode types as you
    *  speak, so there's no post-transcription point at which a command could
    *  be intercepted before its text has already been typed out. */
-  onVoiceCommand?: (text: string) => Promise<boolean>;
+  onVoiceCommand?: (
+    text: string,
+    context: {
+      agentName: string;
+      agentAliases: string[];
+      retryTranscription: (prompt: string) => Promise<string | null>;
+      applicationLanguage: string | null;
+      durationMs: number | null;
+    },
+  ) => Promise<boolean>;
 }
 
 export function useDictation(opts: Options = {}) {

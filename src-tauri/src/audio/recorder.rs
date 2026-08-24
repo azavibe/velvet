@@ -212,7 +212,10 @@ impl AudioRecorder {
 
                 if result.is_err() {
                     log::error!("Audio recording thread panicked");
-                    set_recording_error(&recording_error_thread, "Recording thread panicked unexpectedly".to_string());
+                    set_recording_error(
+                        &recording_error_thread,
+                        "Recording thread panicked unexpectedly".to_string(),
+                    );
                 }
 
                 // Always reset is_recording, even after panic
@@ -311,8 +314,7 @@ pub(crate) fn is_speechless(samples: &[f32], sample_rate: u32) -> bool {
     if peak < SILENCE_PEAK_FLOOR {
         return true;
     }
-    let rms =
-        (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+    let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
     rms < SILENCE_RMS_FLOOR
 }
 
@@ -391,37 +393,90 @@ fn run_recording_thread(device: &cpal::Device, params: RecordingThreadParams) {
 
     let stream_result = match sample_format {
         SampleFormat::F32 => build_stream::<f32>(
-            device, &config, Arc::clone(&samples), Arc::clone(&peak_level), channels, err_callback,
+            device,
+            &config,
+            Arc::clone(&samples),
+            Arc::clone(&peak_level),
+            channels,
+            err_callback,
         ),
         SampleFormat::I16 => build_stream::<i16>(
-            device, &config, Arc::clone(&samples), Arc::clone(&peak_level), channels, err_callback,
+            device,
+            &config,
+            Arc::clone(&samples),
+            Arc::clone(&peak_level),
+            channels,
+            err_callback,
         ),
         SampleFormat::U16 => build_stream::<u16>(
-            device, &config, Arc::clone(&samples), Arc::clone(&peak_level), channels, err_callback,
+            device,
+            &config,
+            Arc::clone(&samples),
+            Arc::clone(&peak_level),
+            channels,
+            err_callback,
         ),
         SampleFormat::I8 => build_stream::<i8>(
-            device, &config, Arc::clone(&samples), Arc::clone(&peak_level), channels, err_callback,
+            device,
+            &config,
+            Arc::clone(&samples),
+            Arc::clone(&peak_level),
+            channels,
+            err_callback,
         ),
         SampleFormat::U8 => build_stream::<u8>(
-            device, &config, Arc::clone(&samples), Arc::clone(&peak_level), channels, err_callback,
+            device,
+            &config,
+            Arc::clone(&samples),
+            Arc::clone(&peak_level),
+            channels,
+            err_callback,
         ),
         SampleFormat::I32 => build_stream::<i32>(
-            device, &config, Arc::clone(&samples), Arc::clone(&peak_level), channels, err_callback,
+            device,
+            &config,
+            Arc::clone(&samples),
+            Arc::clone(&peak_level),
+            channels,
+            err_callback,
         ),
         SampleFormat::U32 => build_stream::<u32>(
-            device, &config, Arc::clone(&samples), Arc::clone(&peak_level), channels, err_callback,
+            device,
+            &config,
+            Arc::clone(&samples),
+            Arc::clone(&peak_level),
+            channels,
+            err_callback,
         ),
         SampleFormat::I64 => build_stream::<i64>(
-            device, &config, Arc::clone(&samples), Arc::clone(&peak_level), channels, err_callback,
+            device,
+            &config,
+            Arc::clone(&samples),
+            Arc::clone(&peak_level),
+            channels,
+            err_callback,
         ),
         SampleFormat::U64 => build_stream::<u64>(
-            device, &config, Arc::clone(&samples), Arc::clone(&peak_level), channels, err_callback,
+            device,
+            &config,
+            Arc::clone(&samples),
+            Arc::clone(&peak_level),
+            channels,
+            err_callback,
         ),
         SampleFormat::F64 => build_stream::<f64>(
-            device, &config, Arc::clone(&samples), Arc::clone(&peak_level), channels, err_callback,
+            device,
+            &config,
+            Arc::clone(&samples),
+            Arc::clone(&peak_level),
+            channels,
+            err_callback,
         ),
         _ => {
-            set_recording_error(&recording_error, format!("Unsupported sample format: {:?}", sample_format));
+            set_recording_error(
+                &recording_error,
+                format!("Unsupported sample format: {:?}", sample_format),
+            );
             return;
         }
     };
@@ -607,9 +662,7 @@ mod tests {
 
     fn sine(amplitude: f32, seconds: f32) -> Vec<f32> {
         let n = (16000.0 * seconds) as usize;
-        (0..n)
-            .map(|i| amplitude * (i as f32 * 0.1).sin())
-            .collect()
+        (0..n).map(|i| amplitude * (i as f32 * 0.1).sin()).collect()
     }
 
     #[test]

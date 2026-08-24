@@ -1,5 +1,6 @@
 import {
   transcribeCloud,
+  transcribeCommandRetry,
   processReasoning,
   getApiKey,
   getSetting,
@@ -40,6 +41,7 @@ export interface TranscriptionSettings {
   agentName: string;
   agentAliases: string[];
   debugMode: boolean | null;
+  uiLanguage?: string | null;
 }
 
 /** Load all settings needed for the transcription pipeline. */
@@ -61,6 +63,7 @@ export async function loadTranscriptionSettings(): Promise<TranscriptionSettings
     agentName,
     agentAliases,
     debugMode,
+    uiLanguage,
   ] = await Promise.all([
     getSetting<string>("cloudTranscriptionProvider"),
     getSetting<string>("cloudTranscriptionModel"),
@@ -78,6 +81,7 @@ export async function loadTranscriptionSettings(): Promise<TranscriptionSettings
     getAgentName(),
     getAgentAliases(),
     getSetting<boolean>("debugMode"),
+    getSetting<string>("uiLanguage"),
   ]);
 
   return {
@@ -97,25 +101,27 @@ export async function loadTranscriptionSettings(): Promise<TranscriptionSettings
     agentName,
     agentAliases,
     debugMode,
+    uiLanguage,
   };
 }
 
-/** Merge agent name + aliases into the transcription dictionary. */
+/** Keep normal ASR vocabulary independent from the wake name. Whisper treats
+ * its prompt as preceding transcript context and may suppress a spoken leading
+ * name when that same name ends the prompt. Wake names belong in the local
+ * resolver and its one bounded retry prompt, not every dictation request. */
 export function buildTranscriptionDictionary(
   dictionary: DictionaryEntry[],
   agentName: string,
   agentAliases: string[],
 ): string[] {
-  const terms = dictionaryTerms(dictionary);
-  const extraWords = [agentName, ...agentAliases]
-    .filter((w): w is string => !!w?.trim())
-    .filter(
-      (word) =>
-        !terms.some(
-          (term) => term.toLocaleLowerCase() === word.toLocaleLowerCase(),
-        ),
-    );
-  return extraWords.length > 0 ? [...terms, ...extraWords] : terms;
+  const wakeTerms = new Set(
+    [agentName, ...agentAliases]
+      .map((term) => term.trim().toLocaleLowerCase())
+      .filter(Boolean),
+  );
+  return dictionaryTerms(dictionary).filter(
+    (term) => !wakeTerms.has(term.trim().toLocaleLowerCase()),
+  );
 }
 
 export interface TranscribeResult {
@@ -177,6 +183,28 @@ export async function transcribe(
     protectedTerms,
   );
   return { text: result.text, detectedLanguage: result.detected_language };
+}
+
+/** Reuse the original recording for the resolver's single bounded ASR retry. */
+export async function retryCommandTranscription(
+  audioData: number[],
+  settings: TranscriptionSettings,
+  prompt: string,
+): Promise<string | null> {
+  const provider = settings.cloudProvider ?? "openai";
+  const apiKey = await getApiKey(provider);
+  if (!apiKey) return null;
+  const result = await transcribeCommandRetry(
+    audioData,
+    provider,
+    apiKey,
+    settings.cloudModel ?? "gpt-4o-mini-transcribe",
+    requestedLanguage(settings) === "auto"
+      ? settings.uiLanguage?.split("-")[0]
+      : requestedLanguage(settings),
+    prompt,
+  );
+  return result?.text ?? null;
 }
 
 export interface EnhancementResult {

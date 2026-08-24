@@ -19,6 +19,8 @@ const HALLUCINATION_PHRASES: &[&str] = &[
     "dontforgettolikeandsubscribe",
     "subtitlesbytheamaraorgcommunity",
     "subtitlesbyamaraorg",
+    "hellohowcaniassistyoutoday",
+    "howcaniassistyoutoday",
     // Chinese
     "谢谢观看",
     "感谢观看",
@@ -53,7 +55,10 @@ fn normalize(text: &str) -> String {
 fn is_repetition_of(norm: &str, phrase: &str) -> bool {
     !phrase.is_empty()
         && norm.len().is_multiple_of(phrase.len())
-        && norm.as_bytes().chunks(phrase.len()).all(|c| c == phrase.as_bytes())
+        && norm
+            .as_bytes()
+            .chunks(phrase.len())
+            .all(|c| c == phrase.as_bytes())
 }
 
 /// True when the entire output is a known hallucination phrase (or that phrase
@@ -64,7 +69,9 @@ pub fn is_known_hallucination(text: &str) -> bool {
     if norm.is_empty() || norm.chars().count() > MAX_CHECK_CHARS {
         return false;
     }
-    HALLUCINATION_PHRASES.iter().any(|p| is_repetition_of(&norm, p))
+    HALLUCINATION_PHRASES
+        .iter()
+        .any(|p| is_repetition_of(&norm, p))
 }
 
 #[cfg(test)]
@@ -75,6 +82,7 @@ mod tests {
     fn exact_phrase_matches() {
         assert!(is_known_hallucination("Thank you for watching."));
         assert!(is_known_hallucination("Thanks for watching!"));
+        assert!(is_known_hallucination("Hello! How can I assist you today?"));
         assert!(is_known_hallucination("谢谢观看"));
         assert!(is_known_hallucination("字幕由Amara.org社区提供"));
         assert!(is_known_hallucination("ご視聴ありがとうございました"));
@@ -86,6 +94,9 @@ mod tests {
         assert!(is_known_hallucination("谢谢观看。谢谢观看。"));
         assert!(is_known_hallucination(
             "Thank you for watching. Thank you for watching. Thank you for watching."
+        ));
+        assert!(is_known_hallucination(
+            "How can I assist you today? How can I assist you today?"
         ));
     }
 

@@ -111,6 +111,51 @@ export async function readChangelog(): Promise<string> {
 }
 
 // Database
+export type AudioAssetStatus = "saving" | "ready" | "missing" | "failed";
+
+export interface AudioAsset {
+  id: number;
+  owner_type: string;
+  owner_id: number;
+  channel: string;
+  sequence: number;
+  status: AudioAssetStatus;
+  /** Only populated when status is "ready". */
+  path: string | null;
+  byte_length: number | null;
+  duration_ms: number | null;
+  error: string | null;
+}
+
+/** One bounded command-focused retranscription. Unsupported providers return null. */
+export async function transcribeCommandRetry(
+  audioData: number[],
+  provider: string,
+  apiKey: string,
+  model: string,
+  language: string | undefined,
+  prompt: string,
+): Promise<TranscriptionResult | null> {
+  return invoke("transcribe_command_retry", {
+    audioData,
+    provider,
+    apiKey,
+    model,
+    language,
+    prompt,
+  });
+}
+
+export interface AudioPlaybackSource {
+  url: string;
+  duration_ms: number | null;
+}
+
+/** Returns an opaque, range-capable URL after backend authorization. */
+export async function getAudioAssetUrl(assetId: number): Promise<AudioPlaybackSource> {
+  return invoke("get_audio_asset_url", { assetId });
+}
+
 export interface Transcription {
   id: number;
   timestamp: string;
@@ -123,6 +168,7 @@ export interface Transcription {
   duration_ms: number | null;
   word_count: number | null;
   audio_path: string | null;
+  audio_asset: AudioAsset | null;
 }
 
 export async function saveTranscription(
@@ -158,6 +204,24 @@ export interface StatsPayload {
 
 export async function getStats(period: StatsPeriod): Promise<StatsPayload> {
   return invoke("get_stats", { period });
+}
+
+export interface AudioRecoveryReport {
+  checked: number;
+  saving: number;
+  ready: number;
+  missing: number;
+  failed: number;
+}
+
+export async function onAudioRecoveryComplete(
+  callback: (report: AudioRecoveryReport) => void,
+): Promise<UnlistenFn> {
+  return listen<AudioRecoveryReport>("audio-recovery-complete", (event) => callback(event.payload));
+}
+
+export async function onAudioRecoveryFailed(callback: (code: string) => void): Promise<UnlistenFn> {
+  return listen<string>("audio-recovery-failed", (event) => callback(event.payload));
 }
 
 export async function getTranscriptions(
@@ -214,6 +278,37 @@ export async function showSettings(): Promise<void> {
 
 export async function showConversationWindow(): Promise<void> {
   return invoke("show_conversation_window");
+}
+
+export type CaptureIntentKind = "note" | "conversation" | "stop" | "settings";
+
+export interface CaptureIntent {
+  id: number;
+  kind: CaptureIntentKind;
+  persona_id: string | null;
+}
+
+/** Store and deliver an application action to its target window. Rust retains
+ * it until that WebView has installed listeners and acknowledges handling. */
+export async function dispatchCaptureIntent(
+  kind: CaptureIntentKind,
+  personaId: string | null = null,
+): Promise<number> {
+  return invoke("dispatch_capture_intent", { kind, personaId });
+}
+
+export async function getPendingCaptureIntent(
+  target: "conversation" | "settings" = "conversation",
+): Promise<CaptureIntent | null> {
+  return invoke("get_pending_capture_intent", { target });
+}
+
+export async function acknowledgeCaptureIntent(intentId: number): Promise<boolean> {
+  return invoke("acknowledge_capture_intent", { intentId });
+}
+
+export async function onCaptureIntentAvailable(callback: () => void): Promise<UnlistenFn> {
+  return listen<void>("capture-intent-available", () => callback());
 }
 
 export async function hideConversationWindow(): Promise<void> {
@@ -425,6 +520,8 @@ export interface ConversationSummary {
   persona_name: string | null;
   audio_path_me: string | null;
   audio_path_them: string | null;
+  audio_asset_me: AudioAsset | null;
+  audio_asset_them: AudioAsset | null;
   snippet: string | null;
 }
 
@@ -537,6 +634,7 @@ export interface Note {
   raw_transcript: string;
   body_markdown: string | null;
   audio_path: string | null;
+  audio_segments: AudioAsset[];
   tags: string[];
 }
 

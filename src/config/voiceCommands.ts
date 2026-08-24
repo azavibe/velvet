@@ -1,186 +1,393 @@
-/**
- * Voice commands: spoken instructions that make the app *do* something
- * ("Aral, start notes") rather than dictate text or ask the agent a
- * question ("Aral, what's the capital of France?").
- *
- * Deliberately stricter than `detectChatMode` in prompts.ts: chat mode only
- * needs the utterance to *open* with an address to the agent, because
- * everything after it is the question. A command has to be the *entire*
- * utterance — "Aral, start notes" is a command, but "Aral, start notes with
- * the following headings…" is not, it's a request for the agent. That whole-
- * utterance rule is what keeps ordinary dictation from accidentally
- * triggering an action, and it's also what makes it safe to be forgiving
- * about the name itself (see `isNameToken`).
- */
+/** Bounded, whole-utterance application voice commands. */
 
 export type VoiceCommand =
   | { kind: "start-note" }
-  /** `personaId` is null when the user didn't name one ("start a
-   *  conversation") — the caller keeps whatever persona is already active. */
   | { kind: "start-conversation"; personaId: string | null }
-  | { kind: "stop" };
+  | { kind: "stop" }
+  | { kind: "open-settings" };
 
-export interface VoiceCommandPersona {
-  id: string;
-  name: string;
+export type VoiceCommandActionId = VoiceCommand["kind"];
+export type VoiceCommandRisk = "low" | "restricted";
+export type VoiceCommandMatchType = "exact" | "fuzzy";
+export type VoiceCommandWakeMatch = "none" | "exact" | "fuzzy";
+
+export interface VoiceCommandDefinition {
+  id: VoiceCommandActionId;
+  phrases: readonly string[];
+  risk: VoiceCommandRisk;
+  confirmationRequired: boolean;
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** The command registry is the vocabulary source for matching and ASR retry prompts. */
+export const VOICE_COMMAND_REGISTRY: readonly VoiceCommandDefinition[] = [
+  {
+    id: "start-note",
+    phrases: [
+      "note", "notes", "start note", "start notes", "take a note", "take notes",
+      "begin note", "begin notes", "new note", "new notes", "create note",
+      "create notes", "make note", "make notes", "open note", "open notes",
+      "note taking", "notes mode",
+    ],
+    risk: "low",
+    confirmationRequired: false,
+  },
+  {
+    id: "start-conversation",
+    phrases: [
+      "conversation", "conversations", "call", "start call", "begin call", "chat",
+      "start conversation", "start a conversation", "begin conversation",
+      "begin a conversation", "new conversation", "new chat", "open conversation",
+    ],
+    risk: "low",
+    confirmationRequired: false,
+  },
+  {
+    id: "open-settings",
+    phrases: ["settings", "open settings", "preferences", "open preferences"],
+    risk: "low",
+    confirmationRequired: false,
+  },
+  {
+    id: "stop",
+    phrases: [
+      "stop", "stop it", "stop that", "stop this", "stop recording", "stop notes",
+      "stop note", "stop conversation", "stop meeting", "stop call", "end conversation",
+      "end the conversation", "end call",
+      "finish note", "finish notes", "cancel recording",
+    ],
+    risk: "restricted",
+    confirmationRequired: false,
+  },
+] as const;
+
+export interface VoiceCommandPersona { id: string; name: string }
+export interface VoiceCommandMatch { command: VoiceCommand; matchType: VoiceCommandMatchType }
+export type VoiceCommandRejectionReason =
+  | "no_configured_wake_name"
+  | "wake_name_not_found"
+  | "bare_wake_name"
+  | "command_too_long"
+  | "conversational_question"
+  | "unsupported_command";
+export interface VoiceCommandDiagnostics {
+  candidate: boolean;
+  wakeMatch: VoiceCommandWakeMatch;
+  matchType: VoiceCommandMatchType | null;
+  action: VoiceCommandActionId | null;
+  rejectionReason: VoiceCommandRejectionReason | null;
+}
+export interface VoiceCommandDetection {
+  match: VoiceCommandMatch | null;
+  diagnostics: VoiceCommandDiagnostics;
 }
 
-// Same greeting list as prompts.ts's address detection, so "Hey Aral, take
-// notes" works exactly like "Aral, take notes".
 const GREETINGS = new Set([
-  "hey", "hi", "hello", "ok", "okay", "hallo", "bonjour", "salut",
-  "hola", "olá", "oi", "привет", "здравствуйте", "你好", "您好", "嗨",
-  "こんにちは", "안녕", "안녕하세요",
+  "hey", "hi", "hello", "ok", "okay", "hallo", "bonjour", "salut", "hola", "olá", "oi",
+  "привет", "здравствуйте", "你好", "您好", "嗨", "こんにちは", "안녕", "안녕하세요",
 ]);
+const OPTIONAL_WAKE_PREFIXES = new Set(["agent"]);
+const LEADING_FILLERS = new Set(["please", "kindly", "just"]);
+const QUESTION_STARTERS = new Set([
+  "what", "who", "why", "when", "where", "how", "which", "whose", "can", "could", "would",
+]);
+const MAX_COMMAND_TOKENS = 8;
+const MAX_NAME_REPEATS = 3;
 
-/** Whitespace and sentence punctuation, ASCII + CJK. */
-const PUNCT = /^[\s,.!:;?—、，。！：；？]+|[\s,.!:;?—、，。！：；？]+$/g;
+function normalizeWord(value: string): string {
+  return value.normalize("NFKD").replace(/\p{M}/gu, "").toLocaleLowerCase();
+}
 
 function tokenize(text: string): string[] {
-  return text
-    .split(/[\s]+/)
-    .map((token) => token.replace(PUNCT, ""))
-    .filter(Boolean);
-}
-
-function levenshtein(a: string, b: string): number {
-  if (a === b) return 0;
-  if (!a.length) return b.length;
-  if (!b.length) return a.length;
-  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    const row = [i];
-    for (let j = 1; j <= b.length; j++) {
-      row[j] = Math.min(
-        prev[j] + 1,
-        row[j - 1] + 1,
-        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
-      );
-    }
-    prev = row;
-  }
-  return prev[b.length];
-}
-
-/**
- * Whether a spoken token is (a mishearing of) one word of the agent's name.
- *
- * Speech-to-text mangles short proper nouns constantly — real captures of
- * "Aral" have come back as "Aro", "Ahral", and "Arrow" — so an exact match
- * would make commands feel broken more often than not. The looseness is
- * safe here only because it's paired with the whole-utterance rule below:
- * a near-miss on the name does nothing unless everything *after* it is
- * exactly a command phrase and nothing else.
- */
-function isNameToken(token: string, word: string): boolean {
-  const t = token.toLowerCase();
-  const w = word.toLowerCase();
-  if (t === w) return true;
-  // Scaled to length so short names don't swallow common words.
-  const budget = w.length >= 4 ? 2 : 1;
-  return levenshtein(t, w) <= budget;
-}
-
-/** How many leading tokens name the agent, or 0 if they don't. */
-function matchNameTokens(tokens: string[], terms: string[]): number {
-  for (const term of terms) {
-    const words = term.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    if (!words.length || words.length > tokens.length) continue;
-    if (words.every((word, i) => isNameToken(tokens[i], word))) return words.length;
-  }
-  return 0;
-}
-
-/** Anchors a pattern to the whole remainder. */
-function whole(pattern: string): RegExp {
-  return new RegExp(`^(?:${pattern})$`, "iu");
-}
-
-const ARTICLE = "(?:\\s+(?:a|an|the|my|new))*";
-
-// "stop", "stop it", "end the conversation", "finish note", "stop recording"
-const STOP = whole(
-  `(?:stop|end|finish|cancel)(?:\\s+(?:it|that|this))?${ARTICLE}` +
-    `(?:\\s+(?:conversation|conversations|call|note|notes|recording|meeting))?`,
-);
-
-// "start notes", "take a note", "new note", "note taking", "notes"
-const NOTE = whole(
-  `(?:(?:start|take|begin|new|create|make|open)${ARTICLE}\\s+)?` +
-    `(?:note|notes)(?:\\s+(?:mode|taking))?`,
-);
-
-// "start a conversation", "begin call", "new chat", "conversation"
-const CONVERSATION = whole(
-  `(?:(?:start|begin|new|open|create)${ARTICLE}\\s+)?` +
-    `(?:conversation|conversations|call|chat)(?:\\s+mode)?`,
-);
-
-/** "start support", "support", "use the sales persona", "switch to meeting" */
-function personaPattern(name: string): RegExp {
-  const escaped = escapeRegExp(name.trim()).replace(/\s+/g, "\\s+");
-  return whole(
-    `(?:(?:start|begin|open|use|switch\\s+to|go\\s+to)${ARTICLE}\\s+)?` +
-      `${escaped}` +
-      `(?:\\s+(?:persona|mode|conversation|call))?`,
+  return Array.from(text.normalize("NFKC").matchAll(/[\p{L}\p{N}]+/gu), (match) =>
+    normalizeWord(match[0]),
   );
 }
 
-/** Guard against a runaway strip on pathological input. */
-const MAX_NAME_REPEATS = 3;
+function levenshtein(a: string, b: string): number {
+  const aa = Array.from(a);
+  const bb = Array.from(b);
+  let previous = Array.from({ length: bb.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= aa.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= bb.length; j++) {
+      row[j] = Math.min(
+        previous[j] + 1,
+        row[j - 1] + 1,
+        previous[j - 1] + (aa[i - 1] === bb[j - 1] ? 0 : 1),
+      );
+    }
+    previous = row;
+  }
+  return previous[bb.length];
+}
 
-/**
- * Returns the command the utterance asks for, or `null` when it isn't one
- * (ordinary dictation, or an agent question — both handled elsewhere).
- *
- * Checked in order: stop, then notes, then a named persona, then a generic
- * conversation. Order matters where vocabularies overlap — "stop meeting"
- * is a stop, not the Meeting persona; a persona literally named "Notes"
- * would lose to the note command.
- */
+/** Small language-neutral consonant skeleton used only after whole-utterance gating. */
+function phoneticSkeleton(value: string): string {
+  const normalized = normalizeWord(value)
+    .replace(/^(?:th)/u, "t")
+    .replace(/ph/gu, "f")
+    .replace(/[ckq]/gu, "k")
+    .replace(/[sz]/gu, "s")
+    .replace(/[dt]/gu, "t")
+    .replace(/[mn]/gu, "n")
+    .replace(/[aeiouy]/gu, "")
+    .replace(/(.)\1+/gu, "$1");
+  return normalized;
+}
+
+function tokenDistance(a: string, b: string): number {
+  const literal = levenshtein(a, b);
+  const pa = phoneticSkeleton(a);
+  const pb = phoneticSkeleton(b);
+  return Math.min(literal, pa && pb ? levenshtein(pa, pb) : literal);
+}
+
+function nameTokenMatches(token: string, expected: string): boolean {
+  if (token === expected) return true;
+  const budget = Array.from(expected).length >= 4 ? 2 : 1;
+  if (levenshtein(token, expected) <= budget) return true;
+  return token[0] === expected[0]
+    && Math.abs(token.length - expected.length) <= 2
+    && levenshtein(phoneticSkeleton(token), phoneticSkeleton(expected)) <= 1;
+}
+
+interface WakeResult {
+  match: VoiceCommandWakeMatch;
+  consumed: number;
+}
+
+function matchWakeAt(
+  tokens: string[],
+  offset: number,
+  terms: string[],
+  allowPhonetic: boolean,
+): WakeResult | null {
+  let bestFuzzy: WakeResult | null = null;
+  for (const term of terms) {
+    const words = tokenize(term);
+    if (!words.length || offset + words.length > tokens.length) continue;
+    if (words.every((word, index) => tokens[offset + index] === word)) {
+      return { match: "exact", consumed: words.length };
+    }
+    if (words.every((word, index) => allowPhonetic
+      ? nameTokenMatches(tokens[offset + index], word)
+      : levenshtein(tokens[offset + index], word) <= (word.length >= 4 ? 2 : 1))) {
+      bestFuzzy ??= { match: "fuzzy", consumed: words.length };
+    }
+  }
+  return bestFuzzy;
+}
+
+function inspectWake(text: string, agentName: string | null, aliases?: string[]): {
+  wakeMatch: VoiceCommandWakeMatch;
+  remainder: string[];
+} {
+  const terms = [agentName ?? "", ...(aliases ?? [])].filter((term) => term.trim());
+  if (!terms.length) return { wakeMatch: "none", remainder: [] };
+  const tokens = tokenize(text);
+  let index = GREETINGS.has(tokens[0]) ? 1 : 0;
+  if (OPTIONAL_WAKE_PREFIXES.has(tokens[index])) index++;
+  let wakeMatch: VoiceCommandWakeMatch = "none";
+  for (let repeat = 0; repeat < MAX_NAME_REPEATS; repeat++) {
+    const match = matchWakeAt(tokens, index, terms, repeat === 0);
+    if (!match) break;
+    index += match.consumed;
+    wakeMatch = wakeMatch === "fuzzy" || match.match === "fuzzy" ? "fuzzy" : "exact";
+  }
+  return { wakeMatch, remainder: wakeMatch === "none" ? [] : tokens.slice(index) };
+}
+
+function normalizeRemainder(tokens: string[]): string[] {
+  let result = [...tokens];
+  while (LEADING_FILLERS.has(result[0])) result = result.slice(1);
+  if ((result[0] === "could" || result[0] === "can") && result[1] === "you") result = result.slice(2);
+  const endings: readonly (readonly string[])[] = [["please"], ["thanks"], ["thank", "you"]];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const ending of endings) {
+      if (result.length >= ending.length && ending.every((word, i) => result[result.length - ending.length + i] === word)) {
+        result = result.slice(0, -ending.length);
+        changed = true;
+      }
+    }
+  }
+  return result;
+}
+
+function commandFor(id: VoiceCommandActionId): VoiceCommand {
+  if (id === "start-note") return { kind: id };
+  if (id === "start-conversation") return { kind: id, personaId: null };
+  return { kind: id };
+}
+
+function personaPhrases(persona: VoiceCommandPersona): string[][] {
+  const name = tokenize(persona.name);
+  return [name, ["start", ...name], ["open", ...name], ["use", ...name], ["switch", "to", ...name]];
+}
+
+function exactAction(tokens: string[], personas: VoiceCommandPersona[]): VoiceCommand | null {
+  const phrase = tokens.join(" ");
+  for (const definition of VOICE_COMMAND_REGISTRY) {
+    if (definition.phrases.some((candidate) => tokenize(candidate).join(" ") === phrase)) {
+      return commandFor(definition.id);
+    }
+  }
+  for (const persona of personas) {
+    if (persona.name.trim() && personaPhrases(persona).some((candidate) => candidate.join(" ") === phrase)) {
+      return { kind: "start-conversation", personaId: persona.id };
+    }
+  }
+  return null;
+}
+
+/** A bare low-risk phrase may justify one audio retry, but is never executable
+ * by itself. The retry must recover the configured wake and the same action. */
+export function matchBareLowRiskRetryAction(
+  text: string,
+  personas: VoiceCommandPersona[],
+): VoiceCommand | null {
+  const body = normalizeRemainder(tokenize(text));
+  if (!body.length || body.length > 4 || QUESTION_STARTERS.has(body[0])) return null;
+  const command = exactAction(body, personas);
+  return command?.kind === "stop" ? null : command;
+}
+
+function fuzzyTokenMatches(actual: string, expected: string, risk: VoiceCommandRisk): boolean {
+  if (actual === expected) return true;
+  if (risk === "restricted") return false;
+  return tokenDistance(actual, expected) <= 1;
+}
+
+function fuzzyPhrase(tokens: string[], phrase: readonly string[], risk: VoiceCommandRisk): boolean {
+  return tokens.length === phrase.length && phrase.every((word, index) =>
+    fuzzyTokenMatches(tokens[index], word, risk),
+  );
+}
+
+function fuzzyAction(
+  tokens: string[],
+  wakeMatch: VoiceCommandWakeMatch,
+  personas: VoiceCommandPersona[],
+): VoiceCommand | null {
+  for (const definition of VOICE_COMMAND_REGISTRY) {
+    for (const rawPhrase of definition.phrases) {
+      const phrase = tokenize(rawPhrase);
+      if (definition.id === "start-conversation" && phrase.some((word) => word === "call" || word === "chat")) {
+        continue;
+      }
+      if (fuzzyPhrase(tokens, phrase, definition.risk) && tokens.join(" ") !== phrase.join(" ")) {
+        return commandFor(definition.id);
+      }
+    }
+  }
+  // Observed Polish-shaped Whisper output for English "call". This is not a
+  // replacement rule: it is eligible only after an exact wake and as the
+  // complete command body.
+  if (wakeMatch === "exact" && tokens.length === 1 && tokens[0] === "kolejny") {
+    return { kind: "start-conversation", personaId: null };
+  }
+  for (const persona of personas) {
+    if (persona.name.trim() && personaPhrases(persona).some((phrase) => fuzzyPhrase(tokens, phrase, "low"))) {
+      return { kind: "start-conversation", personaId: persona.id };
+    }
+  }
+  return null;
+}
+
+export function detectVoiceCommandWithDiagnostics(
+  text: string,
+  agentName: string | null,
+  aliases: string[] | undefined,
+  personas: VoiceCommandPersona[],
+): VoiceCommandDetection {
+  const configured = [agentName ?? "", ...(aliases ?? [])].some((term) => term.trim());
+  const wake = inspectWake(text, agentName, aliases);
+  const body = normalizeRemainder(wake.remainder);
+  const candidate = wake.wakeMatch !== "none" && body.length > 0;
+  let rejectionReason: VoiceCommandRejectionReason | null = null;
+  let match: VoiceCommandMatch | null = null;
+
+  if (!configured) rejectionReason = "no_configured_wake_name";
+  else if (wake.wakeMatch === "none") rejectionReason = "wake_name_not_found";
+  else if (!body.length) rejectionReason = "bare_wake_name";
+  else if (body.length > MAX_COMMAND_TOKENS) rejectionReason = "command_too_long";
+  else if (QUESTION_STARTERS.has(body[0])) rejectionReason = "conversational_question";
+  else {
+    const exact = exactAction(body, personas);
+    if (exact) match = { command: exact, matchType: wake.wakeMatch === "exact" ? "exact" : "fuzzy" };
+    else {
+      const fuzzy = fuzzyAction(body, wake.wakeMatch, personas);
+      if (fuzzy) match = { command: fuzzy, matchType: "fuzzy" };
+      else rejectionReason = "unsupported_command";
+    }
+  }
+
+  return {
+    match,
+    diagnostics: {
+      candidate,
+      wakeMatch: wake.wakeMatch,
+      matchType: match?.matchType ?? null,
+      action: match?.command.kind ?? null,
+      rejectionReason: match ? null : rejectionReason,
+    },
+  };
+}
+
 export function detectVoiceCommand(
   text: string,
   agentName: string | null,
   aliases: string[] | undefined,
   personas: VoiceCommandPersona[],
 ): VoiceCommand | null {
-  const terms = [agentName ?? "", ...(aliases ?? [])].filter((t) => t.trim());
-  if (terms.length === 0) return null;
+  return detectVoiceCommandWithDiagnostics(text, agentName, aliases, personas).match?.command ?? null;
+}
 
+export function matchVoiceCommand(
+  text: string,
+  agentName: string | null,
+  aliases: string[] | undefined,
+  personas: VoiceCommandPersona[],
+): VoiceCommandMatch | null {
+  return detectVoiceCommandWithDiagnostics(text, agentName, aliases, personas).match;
+}
+
+/** Whether a failed local action match is plausible enough to spend one ASR retry. */
+export function isCommandRetryCandidate(
+  detection: VoiceCommandDetection,
+  text: string,
+  personas: VoiceCommandPersona[] = [],
+): boolean {
+  if (!detection.diagnostics.candidate || detection.diagnostics.wakeMatch === "none") return false;
+  if (detection.diagnostics.rejectionReason !== "unsupported_command") return false;
   const tokens = tokenize(text);
-  let i = 0;
-  if (i < tokens.length && GREETINGS.has(tokens[i].toLowerCase())) i++;
+  if (tokens.length > MAX_COMMAND_TOKENS + 3) return false;
+  let wakeEnd = GREETINGS.has(tokens[0]) ? 2 : 1;
+  if (OPTIONAL_WAKE_PREFIXES.has(tokens[0]) || OPTIONAL_WAKE_PREFIXES.has(tokens[1])) wakeEnd++;
+  const body = normalizeRemainder(tokens.slice(wakeEnd));
+  if (!body.length || QUESTION_STARTERS.has(body[0])) return false;
+  const retryPhrases = [
+    ...VOICE_COMMAND_REGISTRY.flatMap((entry) => entry.phrases.map((phrase) => tokenize(phrase))),
+    ...personas.flatMap((persona) => personaPhrases(persona)),
+  ];
+  return retryPhrases.some((phrase) => {
+    return body.length === phrase.length && phrase.every((expected, index) =>
+      tokenDistance(body[index], expected) <= (expected.length >= 6 ? 3 : 2),
+    );
+  });
+}
 
-  // People stutter the wake word, and the recognizer doubles it up on its
-  // own ("Aro Aro start notes", "Aral Ahral start notes") — strip every
-  // leading token that names the agent, not just the first.
-  let repeats = 0;
-  while (repeats < MAX_NAME_REPEATS) {
-    const consumed = matchNameTokens(tokens.slice(i), terms);
-    if (!consumed) break;
-    i += consumed;
-    repeats++;
-  }
-  if (repeats === 0) return null;
-
-  const rest = tokens.slice(i).join(" ");
-  // A bare "Aral" with nothing after it isn't a command.
-  if (!rest) return null;
-
-  if (STOP.test(rest)) return { kind: "stop" };
-  if (NOTE.test(rest)) return { kind: "start-note" };
-
-  for (const persona of personas) {
-    if (persona.name.trim() && personaPattern(persona.name).test(rest)) {
-      return { kind: "start-conversation", personaId: persona.id };
-    }
-  }
-
-  if (CONVERSATION.test(rest)) return { kind: "start-conversation", personaId: null };
-
-  return null;
+export function buildCommandRetryPrompt(
+  agentName: string,
+  aliases: string[],
+  applicationLanguage?: string,
+  personas: VoiceCommandPersona[] = [],
+): string {
+  const wakeTerms = [agentName, ...aliases].filter((term) => term.trim()).join(", ");
+  const commandWords = ["notes", "conversation", "call", "support", "settings", "stop"];
+  const personaNames = personas.map((persona) => persona.name.trim()).filter(Boolean);
+  const vocabulary = [...new Set([...commandWords, ...personaNames])].join(", ");
+  const languageHint = applicationLanguage?.trim() ? ` Application language: ${applicationLanguage}.` : "";
+  return `Spelling context only: the proper wake name may be ${wakeTerms}; application vocabulary: ${vocabulary}.${languageHint} Preserve every spoken word, including a leading wake name. Do not add words that were not spoken.`;
 }

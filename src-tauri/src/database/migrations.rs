@@ -2,6 +2,11 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 pub fn run(conn: &Connection) -> Result<()> {
+    #[cfg(debug_assertions)]
+    let v6_pending = conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))? < 6;
+    #[cfg(debug_assertions)]
+    let v6_started = std::time::Instant::now();
+
     // v1: initial schema. Created without a user_version bump originally —
     // so a "fresh" v1 DB still reads user_version=0. The v2 step below treats
     // any version <2 as needing the v2 columns, which is idempotent in
@@ -26,8 +31,7 @@ pub fn run(conn: &Connection) -> Result<()> {
     // where the columns may already exist while user_version says otherwise —
     // a bare `ALTER TABLE ADD COLUMN` would then fail with "duplicate column
     // name" and prevent the app from starting.
-    let version: i64 =
-        conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if version < 2 {
         if !column_exists(conn, "transcriptions", "duration_ms")? {
             conn.execute(
@@ -93,10 +97,16 @@ pub fn run(conn: &Connection) -> Result<()> {
             conn.execute("ALTER TABLE transcriptions ADD COLUMN audio_path TEXT", [])?;
         }
         if !column_exists(conn, "conversations", "audio_path_me")? {
-            conn.execute("ALTER TABLE conversations ADD COLUMN audio_path_me TEXT", [])?;
+            conn.execute(
+                "ALTER TABLE conversations ADD COLUMN audio_path_me TEXT",
+                [],
+            )?;
         }
         if !column_exists(conn, "conversations", "audio_path_them")? {
-            conn.execute("ALTER TABLE conversations ADD COLUMN audio_path_them TEXT", [])?;
+            conn.execute(
+                "ALTER TABLE conversations ADD COLUMN audio_path_them TEXT",
+                [],
+            )?;
         }
         conn.execute_batch("PRAGMA user_version = 4;")?;
     }
@@ -121,6 +131,61 @@ pub fn run(conn: &Connection) -> Result<()> {
             );",
         )?;
         conn.execute_batch("PRAGMA user_version = 5;")?;
+    }
+
+    // v6: durable audio-asset lifecycle for dictations, conversations, and
+    // notes. Legacy path columns remain for compatibility, but new reads use
+    // this table so a path is only exposed as ready after the completed WAV
+    // has been atomically published.
+    if version < 6 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS audio_assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_type TEXT NOT NULL,
+                owner_id INTEGER NOT NULL,
+                channel TEXT NOT NULL,
+                sequence INTEGER NOT NULL DEFAULT 0,
+                path TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'saving'
+                    CHECK (status IN ('saving', 'ready', 'missing', 'failed')),
+                byte_length INTEGER,
+                duration_ms INTEGER,
+                error TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(owner_type, owner_id, channel, sequence)
+            );
+            CREATE INDEX IF NOT EXISTS idx_audio_assets_owner
+                ON audio_assets(owner_type, owner_id, channel, sequence);
+            INSERT OR IGNORE INTO audio_assets
+                (owner_type, owner_id, channel, sequence, path, status, error)
+            SELECT 'dictation', id, 'main', 0, audio_path, 'missing', 'legacy_unverified'
+            FROM transcriptions
+            WHERE audio_path IS NOT NULL AND audio_path <> '';
+            INSERT OR IGNORE INTO audio_assets
+                (owner_type, owner_id, channel, sequence, path, status, error)
+            SELECT 'conversation', id, 'me', 0, audio_path_me, 'missing', 'legacy_unverified'
+            FROM conversations
+            WHERE audio_path_me IS NOT NULL AND audio_path_me <> '';
+            INSERT OR IGNORE INTO audio_assets
+                (owner_type, owner_id, channel, sequence, path, status, error)
+            SELECT 'conversation', id, 'them', 0, audio_path_them, 'missing', 'legacy_unverified'
+            FROM conversations
+            WHERE audio_path_them IS NOT NULL AND audio_path_them <> '';
+            INSERT OR IGNORE INTO audio_assets
+                (owner_type, owner_id, channel, sequence, path, status, error)
+            SELECT 'note', id, 'main', 0, audio_path, 'missing', 'legacy_unverified'
+            FROM notes
+            WHERE audio_path IS NOT NULL AND audio_path <> '';",
+        )?;
+        conn.execute_batch("PRAGMA user_version = 6;")?;
+    }
+
+    #[cfg(debug_assertions)]
+    if v6_pending {
+        log::info!(
+            "[startup] v6 audio-asset legacy backfill complete elapsed_ms={}",
+            v6_started.elapsed().as_millis()
+        );
     }
 
     Ok(())
@@ -187,13 +252,13 @@ mod tests {
     }
 
     #[test]
-    fn full_run_bumps_user_version_to_5() {
+    fn full_run_bumps_user_version_to_6() {
         let conn = Connection::open_in_memory().unwrap();
         run(&conn).unwrap();
         let v: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(v, 5);
+        assert_eq!(v, 6);
     }
 
     #[test]
@@ -225,7 +290,7 @@ mod tests {
         let v: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(v, 5);
+        assert_eq!(v, 6);
     }
 
     #[test]
@@ -288,7 +353,11 @@ mod tests {
         .unwrap();
 
         let t_path: String = conn
-            .query_row("SELECT audio_path FROM transcriptions WHERE original_text = 'hi'", [], |r| r.get(0))
+            .query_row(
+                "SELECT audio_path FROM transcriptions WHERE original_text = 'hi'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(t_path, "/tmp/a.wav");
 
@@ -340,6 +409,72 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         run(&conn).unwrap();
         // Second call would fail with "table already exists" if v5 weren't guarded.
+        run(&conn).unwrap();
+    }
+
+    #[test]
+    fn v6_creates_audio_assets_and_backfills_legacy_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        run(&conn).unwrap();
+
+        conn.execute("DELETE FROM audio_assets", []).unwrap();
+        conn.execute_batch("PRAGMA user_version = 5;").unwrap();
+        conn.execute(
+            "INSERT INTO transcriptions (original_text, audio_path) VALUES ('legacy', '/legacy.wav')",
+            [],
+        )
+        .unwrap();
+        let transcription_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO conversations (audio_path_me, audio_path_them)
+             VALUES ('/conversation-me.wav', '/conversation-them.wav')",
+            [],
+        )
+        .unwrap();
+        let conversation_id = conn.last_insert_rowid();
+        conn.execute("INSERT INTO notes (audio_path) VALUES ('/note.wav')", [])
+            .unwrap();
+        let note_id = conn.last_insert_rowid();
+
+        run(&conn).unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM audio_assets", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 4);
+
+        let dictation_status: String = conn
+            .query_row(
+                "SELECT status FROM audio_assets WHERE owner_type = 'dictation' AND owner_id = ?1",
+                [transcription_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(dictation_status, "missing");
+
+        let conversation_assets: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM audio_assets WHERE owner_type = 'conversation' AND owner_id = ?1",
+                [conversation_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(conversation_assets, 2);
+
+        let note_asset: String = conn
+            .query_row(
+                "SELECT path FROM audio_assets WHERE owner_type = 'note' AND owner_id = ?1",
+                [note_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(note_asset, "/note.wav");
+    }
+
+    #[test]
+    fn v6_is_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        run(&conn).unwrap();
         run(&conn).unwrap();
     }
 }

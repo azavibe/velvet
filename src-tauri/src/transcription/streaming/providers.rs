@@ -87,7 +87,10 @@ mod tests {
         let cfg = lookup("openai").unwrap();
         assert_eq!(cfg.audio_sample_rate, 24_000);
         assert_eq!(cfg.default_model, "gpt-4o-mini-transcribe");
-        assert!(matches!(cfg.vad_mode, VadMode::ServerVad { silence_ms: 500 }));
+        assert!(matches!(
+            cfg.vad_mode,
+            VadMode::ServerVad { silence_ms: 500 }
+        ));
         assert!(cfg.supports_transcription_prompt);
         // Transcription-only mode requires `?intent=transcription`
         assert!(cfg.ws_url_template.contains("intent=transcription"));
@@ -97,7 +100,10 @@ mod tests {
     fn lookup_returns_qwen_config() {
         let cfg = lookup("qwen").unwrap();
         assert_eq!(cfg.audio_sample_rate, 16_000);
-        assert!(matches!(cfg.vad_mode, VadMode::ServerVad { silence_ms: 400 }));
+        assert!(matches!(
+            cfg.vad_mode,
+            VadMode::ServerVad { silence_ms: 400 }
+        ));
         assert_eq!(cfg.extra_headers, &[("OpenAI-Beta", "realtime=v1")]);
         assert!(!cfg.supports_transcription_prompt);
     }

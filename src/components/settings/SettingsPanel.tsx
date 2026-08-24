@@ -19,6 +19,7 @@ import {
 import { useSettings } from "@/hooks/useSettings";
 import { ToastProvider, useToast } from "@/components/ui/Toast";
 import { readChangelog, getSetting, setSetting } from "@/services/tauriApi";
+import { whatsNewReleaseKey } from "@/config/whatsNew";
 import WhatsNewModal from "@/components/ui/WhatsNewModal";
 import MicWarningModal from "@/components/ui/MicWarningModal";
 import GeneralSection from "./GeneralSection";
@@ -79,12 +80,13 @@ function SettingsPanelInner() {
 
     async function checkWhatsNew() {
       try {
-        const [currentVersion, lastWhatsNew] = await Promise.all([
+        const [currentVersion, lastWhatsNewRelease] = await Promise.all([
           getVersion(),
-          getSetting<string>("lastWhatsNewVersion"),
+          getSetting<string>("lastWhatsNewRelease"),
         ]);
+        const currentRelease = whatsNewReleaseKey(currentVersion);
         const isDev = import.meta.env.DEV;
-        if (!isDev && lastWhatsNew === currentVersion) {
+        if (!isDev && lastWhatsNewRelease === currentRelease) {
           whatsNewChecked.current = true;
           return;
         }
@@ -210,7 +212,13 @@ function SettingsPanelInner() {
           version={whatsNew.version}
           changelog={whatsNew.changelog}
           onDismiss={() => {
-            setSetting("lastWhatsNewVersion", whatsNew.version);
+            void Promise.all([
+              setSetting("lastWhatsNewVersion", whatsNew.version),
+              setSetting(
+                "lastWhatsNewRelease",
+                whatsNewReleaseKey(whatsNew.version),
+              ),
+            ]);
             setWhatsNew(null);
           }}
         />

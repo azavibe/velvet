@@ -14,8 +14,6 @@ export default defineConfig({
     },
   },
 
-  // Only scan the real entry point — prevents Vite from crawling into
-  // src-tauri/target/doc/ which contains thousands of Rust doc HTML files.
   optimizeDeps: {
     entries: ["index.html"],
   },
@@ -25,7 +23,11 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+
+    // Use IPv4 loopback locally.
+    // Preserve TAURI_DEV_HOST when Tauri explicitly provides one.
+    host: host || "127.0.0.1",
+
     hmr: host
       ? {
           protocol: "ws",
@@ -33,6 +35,7 @@ export default defineConfig({
           port: 1421,
         }
       : undefined,
+
     watch: {
       ignored: ["**/src-tauri/**"],
     },

@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { detectVoiceCommand } from "../src/config/voiceCommands";
+import {
+  detectVoiceCommand,
+  detectVoiceCommandWithDiagnostics,
+  matchVoiceCommand,
+} from "../src/config/voiceCommands";
 
 const PERSONAS = [
   { id: "meeting", name: "Meeting" },
@@ -27,11 +31,22 @@ describe("voice command detection", () => {
     }
   });
 
+  test("accepts only the short, wake-word-prefixed note ASR variants fuzzily", () => {
+    for (const text of ["Aral, stark nodes", "Aral, star nodes", "Aral, start node"]) {
+      expect(detect(text)).toEqual({ kind: "start-note" });
+      expect(matchVoiceCommand(text, "Aral", ["Arrow"], PERSONAS)?.matchType).toBe("fuzzy");
+    }
+    expect(detect("Aral, please start nodes")).toEqual({ kind: "start-note" });
+    expect(detect("Aral, could you start notes")).toEqual({ kind: "start-note" });
+  });
+
   test("starts a conversation without naming a persona", () => {
     for (const text of [
       "Aral, start conversation",
       "Aral, start a conversation.",
       "Okay Aral, begin call",
+      "Aral, call",
+      "Aral, start call",
       "Aral, new chat",
     ]) {
       expect(detect(text)).toEqual({ kind: "start-conversation", personaId: null });
@@ -76,12 +91,40 @@ describe("voice command detection", () => {
     expect(detect("Ahral said he would start notes for the meeting", [])).toBeNull();
   });
 
+  test("does not globally rewrite nodes or trigger on an ordinary interior mention", () => {
+    expect(detect("I use nodes in this project")).toBeNull();
+    expect(detect("Aral, I use nodes in this project")).toBeNull();
+    expect(detect("Aral, start nodes for the meeting notes")).toBeNull();
+    expect(detect("Aral, star the nodes in this graph")).toBeNull();
+  });
+
+  test("keeps exact support and conversation commands preferred", () => {
+    expect(matchVoiceCommand("Aral, support", "Aral", [], PERSONAS)).toEqual({
+      command: { kind: "start-conversation", personaId: "support" },
+      matchType: "exact",
+    });
+    expect(matchVoiceCommand("Aral, conversation", "Aral", [], PERSONAS)).toEqual({
+      command: { kind: "start-conversation", personaId: null },
+      matchType: "exact",
+    });
+  });
+
+  test("accepts greetings and multilingual surrounding text without loosening the command body", () => {
+    expect(detect("Bonjour Aral, start notes")).toEqual({ kind: "start-note" });
+    expect(detect("Привет Aral, conversation")).toEqual({
+      kind: "start-conversation",
+      personaId: null,
+    });
+    expect(detect("Hola Aral, nodes in this project")).toBeNull();
+  });
+
   test("ordinary dictation is never a command", () => {
     for (const text of [
       "let's start a conversation about the roadmap",
       "I need to take notes on this later",
       "please stop the deployment",
       "we should support the new format",
+      "I will call support after we discuss notes and conversation",
     ]) {
       expect(detect(text)).toBeNull();
     }
@@ -103,5 +146,36 @@ describe("voice command detection", () => {
   test("no agent name configured means no commands", () => {
     expect(detectVoiceCommand("start notes", "", [], PERSONAS)).toBeNull();
     expect(detectVoiceCommand("start notes", null, undefined, PERSONAS)).toBeNull();
+  });
+
+  test("uses the configured name instead of a built-in wake word", () => {
+    expect(detectVoiceCommand("Clara, start notes", "Clara", [], PERSONAS)).toEqual({
+      kind: "start-note",
+    });
+    expect(detectVoiceCommand("Aral, start notes", "Clara", [], PERSONAS)).toBeNull();
+  });
+
+  test("reports privacy-safe candidate, wake, action, and rejection diagnostics", () => {
+    expect(detectVoiceCommandWithDiagnostics("Aro, stark nodes", "Aral", [], PERSONAS).diagnostics).toEqual({
+      candidate: true,
+      wakeMatch: "fuzzy",
+      matchType: "fuzzy",
+      action: "start-note",
+      rejectionReason: null,
+    });
+    expect(detectVoiceCommandWithDiagnostics("Aral, call the support team", "Aral", [], PERSONAS).diagnostics).toEqual({
+      candidate: true,
+      wakeMatch: "exact",
+      matchType: null,
+      action: null,
+      rejectionReason: "unsupported_command",
+    });
+  });
+
+  test("keeps settings declarative and addressed questions non-command", () => {
+    expect(detect("Aral, settings")).toEqual({ kind: "open-settings" });
+    expect(detect("Aral, open preferences")).toEqual({ kind: "open-settings" });
+    expect(detect("Aral, what settings do you have?")).toBeNull();
+    expect(detect("Aral, what is your name?")).toBeNull();
   });
 });

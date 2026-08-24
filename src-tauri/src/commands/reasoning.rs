@@ -32,7 +32,10 @@ pub async fn process_reasoning(
 
     match reasoning::process(&req).await {
         Ok(response) => {
-            log::info!("[Whisperi] Enhancement complete ({} chars)", response.text.len());
+            log::info!(
+                "[Whisperi] Enhancement complete ({} chars)",
+                response.text.len()
+            );
             // Run the full Chinese post-processing pipeline (punctuation + T→S
             // when the configured language is Chinese). Acts as a deterministic
             // safety net for models that occasionally slip into Traditional

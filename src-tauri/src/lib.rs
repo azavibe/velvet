@@ -113,6 +113,14 @@ pub fn run() {
     colored::control::set_override(true);
 
     tauri::Builder::default()
+        .register_asynchronous_uri_scheme_protocol("recording", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            std::thread::spawn(move || {
+                responder.respond(crate::commands::playback::serve_recording_request(
+                    &app, request,
+                ));
+            });
+        })
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
@@ -151,14 +159,26 @@ pub fn run() {
             None,
         ))
         .setup(|app| {
+            #[cfg(debug_assertions)]
+            let setup_started = std::time::Instant::now();
+
+            #[cfg(debug_assertions)]
+            log::info!("[startup] Tauri setup started");
             // Initialize audio recording state
             app.manage(audio::RecordingState::new());
+
+            // Voice commands are queued here before the hidden Conversation
+            // WebView is shown. This prevents first-load/listener races from
+            // dropping a command between window focus and React mount.
+            app.manage(commands::app::CaptureIntentState::default());
 
             // Conversations feature: dual-channel (mic + loopback) capture
             // state. Wrapped in Arc so the chunk-consumer task spawned in
             // start_conversation can hold a handle across await points,
             // same as LiveSessionState below.
-            app.manage(std::sync::Arc::new(audio::conversation::ConversationState::new()));
+            app.manage(std::sync::Arc::new(
+                audio::conversation::ConversationState::new(),
+            ));
 
             // History & Analytics: per-channel WAV writers for the
             // currently-running conversation's audio archive.
@@ -166,7 +186,9 @@ pub fn run() {
 
             // Notes feature: mic-only capture with pause/resume, mirroring
             // ConversationState's Arc-wrapping for the same reason.
-            app.manage(std::sync::Arc::new(audio::note_capture::NoteCaptureState::new()));
+            app.manage(std::sync::Arc::new(
+                audio::note_capture::NoteCaptureState::new(),
+            ));
             app.manage(crate::commands::notes::NoteAudioArchive::default());
 
             // Initialize live dictation session state. Wrap in Arc so the
@@ -180,6 +202,12 @@ pub fn run() {
             // Initialize database
             let app_handle = app.handle().clone();
             database::init(&app_handle)?;
+
+            #[cfg(debug_assertions)]
+            log::info!(
+                "[startup] backend state initialized elapsed_ms={}",
+                setup_started.elapsed().as_millis()
+            );
 
             // Restore the overlay location without restoring its fixed size.
             if let Some(main_window) = app.get_webview_window("main") {
@@ -245,6 +273,12 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            #[cfg(debug_assertions)]
+            log::info!(
+                "[startup] Tauri setup complete elapsed_ms={}",
+                setup_started.elapsed().as_millis()
+            );
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -253,6 +287,7 @@ pub fn run() {
             commands::audio::stop_recording,
             commands::audio::get_audio_level,
             commands::transcription::transcribe_cloud,
+            commands::transcription::transcribe_command_retry,
             commands::reasoning::process_reasoning,
             commands::settings::get_setting,
             commands::settings::set_setting,
@@ -265,10 +300,14 @@ pub fn run() {
             commands::database::delete_transcription,
             commands::database::clear_transcriptions,
             commands::database::get_stats,
+            commands::playback::get_audio_asset_url,
             commands::app::quit_app,
             commands::app::show_settings,
             commands::app::show_conversation_window,
             commands::app::hide_conversation_window,
+            commands::app::dispatch_capture_intent,
+            commands::app::get_pending_capture_intent,
+            commands::app::acknowledge_capture_intent,
             commands::changelog::read_changelog,
             commands::live::start_live_session,
             commands::live::stop_live_session,
@@ -330,9 +369,16 @@ pub fn run() {
                     .inner()
                     .clone();
                 let _ = crate::audio::conversation::ConversationCapture::stop(&conv_state);
-                app_handle
-                    .state::<crate::commands::conversation::ConversationAudioArchive>()
-                    .finalize();
+                if let Ok(recordings_root) = crate::commands::recordings_dir(app_handle) {
+                    let archive = app_handle
+                        .state::<crate::commands::conversation::ConversationAudioArchive>();
+                    let db = app_handle.state::<crate::database::Database>();
+                    if archive.wait_for_consumer().is_err() {
+                        archive.abort(&db, &recordings_root);
+                    } else {
+                        archive.finalize(&db, &recordings_root);
+                    }
+                }
 
                 // Same for an active note capture.
                 let note_state = app_handle
@@ -340,9 +386,15 @@ pub fn run() {
                     .inner()
                     .clone();
                 let _ = crate::audio::note_capture::NoteCapture::stop(&note_state);
-                app_handle
-                    .state::<crate::commands::notes::NoteAudioArchive>()
-                    .finalize();
+                if let Ok(recordings_root) = crate::commands::recordings_dir(app_handle) {
+                    let archive = app_handle.state::<crate::commands::notes::NoteAudioArchive>();
+                    let db = app_handle.state::<crate::database::Database>();
+                    if archive.wait_for_consumer().is_err() {
+                        archive.abort(&db, &recordings_root);
+                    } else {
+                        archive.finalize(&db, &recordings_root);
+                    }
+                }
             }
         });
 }

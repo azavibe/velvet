@@ -4,6 +4,7 @@ import {
   dictionaryPromptHints,
   normalizeDictionary,
 } from "../src/models/dictionary";
+import { buildTranscriptionDictionary } from "../src/hooks/useTranscriptionPipeline";
 
 describe("custom dictionary normalization", () => {
   test("migrates legacy string entries without changing their spelling", () => {
@@ -60,5 +61,17 @@ describe("custom dictionary corrections", () => {
       'CLAUDE (always replace these whole-word forms: "cloud")',
       'Codex (may be transcribed as "code x"; replace only when context indicates Codex)',
     ]);
+  });
+});
+
+describe("normal transcription prompt vocabulary", () => {
+  test("does not prime Whisper with the configured wake name", () => {
+    const dictionary = [
+      { term: "Acme", aliases: [], policy: "contextual" as const },
+      { term: "Agenda", aliases: [], policy: "contextual" as const },
+      { term: "Assistant", aliases: [], policy: "contextual" as const },
+    ];
+    expect(buildTranscriptionDictionary(dictionary, "Agenda", ["Assistant"])).toEqual(["Acme"]);
+    expect(buildTranscriptionDictionary([], "Agenda", [])).toEqual([]);
   });
 });

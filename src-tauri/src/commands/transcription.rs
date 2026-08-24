@@ -1,6 +1,22 @@
 use super::ResultExt;
 use crate::transcription;
 use serde::Serialize;
+use std::time::Duration;
+
+const COMMAND_RETRY_TIMEOUT: Duration = Duration::from_secs(15);
+const MAX_COMMAND_PROMPT_CHARS: usize = 2_048;
+
+fn supports_command_retry(provider: &str) -> bool {
+    matches!(provider, "openai" | "groq" | "mistral" | "openrouter")
+}
+
+fn validate_command_retry_prompt(prompt: &str) -> Result<(), String> {
+    if prompt.trim().is_empty() || prompt.chars().count() > MAX_COMMAND_PROMPT_CHARS {
+        Err("invalid_command_retry_prompt".to_owned())
+    } else {
+        Ok(())
+    }
+}
 
 /// Normalize locale codes like "en-US" to ISO 639-1 "en" for transcription APIs.
 fn normalize_language(lang: Option<String>) -> Option<String> {
@@ -89,8 +105,16 @@ fn script_language<'a>(text: &str, primary: &'a str, secondary: &'a str) -> Opti
     if (pc == Script::Kana && sc == Script::Han) || (pc == Script::Han && sc == Script::Kana) {
         let has_kana = text.chars().any(|c| char_script(c) == Some(Script::Kana));
         let has_han = text.chars().any(|c| char_script(c) == Some(Script::Han));
-        let kana_lang = if pc == Script::Kana { primary } else { secondary };
-        let han_lang = if pc == Script::Han { primary } else { secondary };
+        let kana_lang = if pc == Script::Kana {
+            primary
+        } else {
+            secondary
+        };
+        let han_lang = if pc == Script::Han {
+            primary
+        } else {
+            secondary
+        };
         return match (has_kana, has_han) {
             (true, _) => Some(kana_lang),
             (false, true) => Some(han_lang),
@@ -100,9 +124,8 @@ fn script_language<'a>(text: &str, primary: &'a str, secondary: &'a str) -> Opti
 
     // A char counts toward a language when it is in that language's script;
     // Han also counts toward Japanese (kanji inside Japanese text).
-    let counts_toward = |cs: Script, class: Script| {
-        cs == class || (class == Script::Kana && cs == Script::Han)
-    };
+    let counts_toward =
+        |cs: Script, class: Script| cs == class || (class == Script::Kana && cs == Script::Han);
     let weight = |cs: Script| match cs {
         Script::Han | Script::Kana | Script::Hangul => 3.0_f32,
         _ => 1.0,
@@ -226,6 +249,7 @@ pub async fn transcribe_cloud(
             engine_lang.as_deref(),
             Some(prompt.as_str()),
             None,
+            None,
         )
         .await
         .str_err()?,
@@ -236,6 +260,7 @@ pub async fn transcribe_cloud(
             &model,
             engine_lang.as_deref(),
             Some(prompt.as_str()),
+            None,
         )
         .await
         .str_err()?,
@@ -250,6 +275,7 @@ pub async fn transcribe_cloud(
             &model,
             engine_lang.as_deref(),
             Some(prompt.as_str()),
+            None,
         )
         .await
         .str_err()?,
@@ -260,6 +286,7 @@ pub async fn transcribe_cloud(
             &model,
             engine_lang.as_deref(),
             Some(prompt.as_str()),
+            None,
         )
         .await
         .str_err()?,
@@ -272,11 +299,8 @@ pub async fn transcribe_cloud(
         Some(prompt.as_str()),
         &protected_terms,
     );
-    let stripped = transcription::cloud::strip_dictionary_edge_echo(
-        &stripped,
-        &dictionary,
-        &protected_terms,
-    );
+    let stripped =
+        transcription::cloud::strip_dictionary_edge_echo(&stripped, &dictionary, &protected_terms);
     // Whole-output hallucination phrases (silence artifacts) are blanked; the
     // frontend's empty-transcription check then skips the result silently.
     let stripped = if transcription::hallucination::is_known_hallucination(&stripped) {
@@ -298,9 +322,107 @@ pub async fn transcribe_cloud(
     })
 }
 
+/// One command-scoped retranscription over the original in-memory recording.
+/// Unsupported providers return `None`; timeout and request failures are
+/// nonfatal at the frontend resolver boundary and never create database rows.
+#[tauri::command]
+pub async fn transcribe_command_retry(
+    audio_data: Vec<u8>,
+    provider: String,
+    api_key: String,
+    model: String,
+    language: Option<String>,
+    prompt: String,
+) -> Result<Option<TranscriptionResult>, String> {
+    validate_command_retry_prompt(&prompt)?;
+    if !supports_command_retry(&provider) {
+        #[cfg(debug_assertions)]
+        log::debug!("[voice-command] code=retry_unsupported_provider");
+        return Ok(None);
+    }
+
+    let language = normalize_language(language);
+    #[cfg(debug_assertions)]
+    log::debug!("[voice-command] code=retry_request_started provider={provider}");
+    let request = async {
+        match provider.as_str() {
+            "openai" => {
+                transcription::cloud::transcribe_openai(
+                    audio_data,
+                    &api_key,
+                    &model,
+                    language.as_deref(),
+                    Some(&prompt),
+                    None,
+                    Some(0.0),
+                )
+                .await
+            }
+            "groq" => {
+                transcription::cloud::transcribe_groq(
+                    audio_data,
+                    &api_key,
+                    &model,
+                    language.as_deref(),
+                    Some(&prompt),
+                    Some(0.0),
+                )
+                .await
+            }
+            "mistral" => {
+                transcription::cloud::transcribe_mistral(
+                    audio_data,
+                    &api_key,
+                    &model,
+                    language.as_deref(),
+                    Some(&prompt),
+                    Some(0.0),
+                )
+                .await
+            }
+            "openrouter" => {
+                transcription::cloud::transcribe_openrouter(
+                    audio_data,
+                    &api_key,
+                    &model,
+                    language.as_deref(),
+                    Some(&prompt),
+                    Some(0.0),
+                )
+                .await
+            }
+            _ => unreachable!("provider support checked above"),
+        }
+    };
+
+    let output = tokio::time::timeout(COMMAND_RETRY_TIMEOUT, request)
+        .await
+        .map_err(|_| "command_retry_timeout".to_owned())?
+        .str_err()?;
+    #[cfg(debug_assertions)]
+    log::debug!("[voice-command] code=retry_request_completed");
+    let text = transcription::finalize_chinese_text(&output.text, language.as_deref());
+    Ok(Some(TranscriptionResult {
+        text,
+        detected_language: output.detected_language,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_retry_support_is_explicit_and_prompt_is_bounded() {
+        for provider in ["openai", "groq", "mistral", "openrouter"] {
+            assert!(supports_command_retry(provider));
+        }
+        assert!(!supports_command_retry("qwen"));
+        assert!(!supports_command_retry("unknown"));
+        assert!(validate_command_retry_prompt("Wake: Agent. Commands: notes.").is_ok());
+        assert!(validate_command_retry_prompt("  ").is_err());
+        assert!(validate_command_retry_prompt(&"x".repeat(MAX_COMMAND_PROMPT_CHARS + 1)).is_err());
+    }
 
     #[test]
     fn resolve_keeps_in_set_detection_without_script_evidence() {
@@ -320,7 +442,12 @@ mod tests {
         // A Chinese transcript with a mis-detected in-pair "en" resolves to zh —
         // the transcript's script is ground truth.
         assert_eq!(
-            resolve_language(Some("en"), Some("zh"), Some("en"), "今天天气很好，我们去公园吧"),
+            resolve_language(
+                Some("en"),
+                Some("zh"),
+                Some("en"),
+                "今天天气很好，我们去公园吧"
+            ),
             Some("zh".to_string())
         );
     }
@@ -345,7 +472,10 @@ mod tests {
     fn resolve_out_of_set_detection_is_unresolved() {
         // Bilingual: a third-language detection no longer snaps to primary —
         // that snap injected an unspoken language into enhancement (translation bug).
-        assert_eq!(resolve_language(Some("zh"), Some("en"), Some("ko"), ""), None);
+        assert_eq!(
+            resolve_language(Some("zh"), Some("en"), Some("ko"), ""),
+            None
+        );
     }
 
     #[test]
@@ -360,7 +490,10 @@ mod tests {
             resolve_language(Some("de"), Some("fr"), Some("fr"), "Bonjour tout le monde"),
             Some("fr".to_string())
         );
-        assert_eq!(resolve_language(Some("de"), Some("fr"), None, "hello"), None);
+        assert_eq!(
+            resolve_language(Some("de"), Some("fr"), None, "hello"),
+            None
+        );
     }
 
     #[test]
