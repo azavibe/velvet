@@ -184,7 +184,7 @@ function SettingsPanelInner() {
               <GeneralSection settings={settings} update={update} />
             )}
             {section === "transcription" && (
-              <TranscriptionSection settings={settings} update={update} />
+              <TranscriptionSection settings={settings} update={update} toast={toast} />
             )}
             {section === "ai-models" && (
               <AIModelsSection settings={settings} update={update} />

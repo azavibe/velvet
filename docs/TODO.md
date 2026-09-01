@@ -78,15 +78,16 @@ Detailed [implementation plan](plans/conversational-assistant.md).
   - [x] Store correction status, confidence, and evidence category without logging the user’s speech.
   - [x] Show raw, corrected, and final text separately in expanded History entries.
 - [ ] Extend reconciliation to Live dictation after a low-latency streaming design is verified.
-- [ ] Use durable known entities, repeated evidence, contradiction, and inactivity once v0.10 memory exists.
+- [x] Use durable known entities, repeated evidence, contradiction, and inactivity once v0.10 memory exists.
 
 ### v0.10.0 — Long-term memory and knowledge
 
-- [ ] Add a minimal SQLite-backed memory layer for entities, aliases, facts, relationships, sources, confidence, and contradiction state.
-  - [ ] Extract memory automatically after completed turns, notes, and conversations without making ambiguous content permanent.
-  - [ ] Retrieve only bounded recent context, rolling summaries, relevant SQLite results, aliases, recency, confidence, persona, and topic.
-  - [ ] Remove or downgrade source-dependent memory when its dictation, note, or conversation is deleted.
-- [ ] Add an automatic-memory toggle and reset action without introducing a graph editor or training interface.
+- [x] Add a minimal SQLite-backed memory layer for entities, aliases, facts, relationships, sources, confidence, and contradiction state.
+  - [x] Extract memory automatically after completed Standard dictations, notes, and conversations without making ambiguous content permanent.
+  - [x] Retrieve bounded recent turns and relevant SQLite entities, aliases, facts, relationships, and summaries using recency, confidence, persona, and current transcript context.
+  - [x] Remove or downgrade source-dependent memory when its dictation, note, or conversation is deleted.
+- [x] Add an automatic-memory toggle and reset action without introducing a graph editor or training interface.
+- [ ] Extend memory extraction to Live dictation only after a safe completed-utterance source model is designed.
 
 ### Deferred — Direct conversation and text-to-speech
 

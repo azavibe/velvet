@@ -59,7 +59,7 @@ cpal's audio `Stream` is `!Send` — it cannot cross thread boundaries. Whisperi
 Every dictation flows through a linear pipeline:
 
 ```
-Hotkey → Record → WAV Encode → Transcribe → [Enhance] → Save → Paste
+Hotkey → Record → WAV Encode → Transcribe → [Reconcile] → [Enhance] → Save → Paste → [Extract memory]
 ```
 
 Each stage is independently configurable: transcription uses OpenAI / Groq / Mistral / Qwen / OpenRouter; AI enhancement is optional (OpenAI / Anthropic / Gemini / Groq / Qwen / OpenRouter); paste can be toggled off. The pipeline lives in the `useAudioRecording` hook on the frontend side, calling into Rust commands for each stage. On-device models and executable sidecars are intentionally unsupported.
@@ -79,7 +79,8 @@ Both windows persist their position via `tauri-plugin-window-state`. The fixed-s
 
 - **Transient state** (recording phase, audio level, current transcript) lives in React hooks and resets naturally on component unmount.
 - **User preferences** persist via `tauri-plugin-store` (a JSON file), loaded on mount with defaults back-filled for any missing keys.
-- **Transcription history** is stored in SQLite (`{app_data}/whisperi.db`), queryable with pagination.
+- **Transcription, conversation, and note history** is stored in SQLite (`{app_data}/whisperi.db`), queryable with pagination.
+- **Long-term memory** is opt-in and stored in the same SQLite database. Cloud reasoning extracts bounded candidates, but one source remains provisional; only repeated independent support confirms a memory for retrieval.
 
 There is no global state manager (no Redux, Zustand, etc.). Each concern owns its state through a dedicated hook.
 
@@ -98,7 +99,7 @@ Whisperi is Windows-first. Clipboard read/write, terminal detection, and keystro
 | **transcription/streaming** | `transcription/streaming/{mod.rs, audio_pump.rs, providers.rs, realtime_openai_compatible.rs}` | Live mode: WebSocket streaming ASR over the OpenAI Realtime API wire protocol. Online resampler + PCM16 encoder feeds 100ms audio chunks; `.completed` utterance events emit Tauri events for the frontend to type into the focused window. |
 | **reasoning** | `reasoning/openai.rs`, `anthropic.rs`, `gemini.rs` | AI text enhancement. OpenAI-compatible (OpenAI, Groq, Qwen, OpenRouter) via Chat Completions; Anthropic via Messages API; Gemini via Generative API |
 | **clipboard** | `clipboard/mod.rs` | Win32 clipboard get/set, foreground-window terminal detection, paste via `SendInput` with terminal-aware key combos |
-| **database** | `database/mod.rs`, `migrations.rs` | SQLite via rusqlite. Single `transcriptions` table. Auto-migrates on startup. `Mutex<Connection>` for thread safety |
+| **database** | `database/mod.rs`, `migrations.rs` | SQLite via rusqlite. History, archived-audio ownership, reconciliation audit fields, and source-aware memory. Auto-migrates on startup. `Mutex<Connection>` for thread safety |
 | **settings** | `commands/settings.rs` | Thin wrapper over `tauri-plugin-store` — get/set/get-all |
 | **models** | `models/mod.rs` | Streaming HTTP download with progress events, atomic file rename, `.part` temp files |
 | **commands** | `commands/audio.rs`, `app.rs`, `changelog.rs`, `clipboard.rs`, `database.rs`, `models.rs`, `reasoning.rs`, `settings.rs`, `transcription.rs` | Tauri `#[command]` handlers — thin wrappers that delegate to domain modules |
@@ -267,7 +268,10 @@ and normalizes it in memory, so existing settings remain valid.
 
 ## Database Schema
 
-Single table in `{app_data}/whisperi.db`:
+The database in `{app_data}/whisperi.db` contains history tables for
+dictations, conversations, conversation utterances and suggestions, notes,
+archived audio assets, and the source-aware memory tables introduced in v8.
+The central dictation table begins with:
 
 ```sql
 CREATE TABLE transcriptions (
@@ -283,6 +287,15 @@ CREATE TABLE transcriptions (
 ```
 
 Queried with `ORDER BY id DESC LIMIT ? OFFSET ?` for paginated history display.
+
+Long-term memory is split across `memory_items`, `memory_aliases`, and
+`memory_sources`. Items have a kind, canonical text, optional
+subject/predicate/object fields, confidence, support count, state, and support
+timestamps. Source links identify a dictation, conversation, or note. Deleting
+a source removes those links and recomputes trust; items with no remaining
+source are deleted. Retrieval returns at most 12 confirmed, sufficiently recent
+records, prioritizing canonical and alias matches. The reset command deletes
+all memory items and cascades through aliases and source links.
 
 ---
 

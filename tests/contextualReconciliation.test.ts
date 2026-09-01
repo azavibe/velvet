@@ -40,6 +40,28 @@ describe("automatic contextual speech correction", () => {
     expect(result.evidence).toBe("recent");
   });
 
+  test("accepts correction backed by confirmed long-term memory", async () => {
+    const result = await reconcileSpeech(
+      "Email the Asma Eye contract.",
+      {
+        ...context,
+        dictionary: [],
+        recentTexts: [],
+        knownMemories: [{
+          id: 1,
+          kind: "entity",
+          canonical_text: "Asmodee",
+          aliases: [],
+          confidence: 0.94,
+          support_count: 2,
+        }],
+      },
+      async () => JSON.stringify({ text: "Email the Asmodee contract.", confidence: 0.96 }),
+    );
+    expect(result.status).toBe("accepted");
+    expect(result.evidence).toBe("memory");
+  });
+
   test("rejects paraphrasing even when the model is confident", async () => {
     const raw = "Send this to Asma Eye tomorrow.";
     const result = await reconcileSpeech(

@@ -1,5 +1,24 @@
 # Progress
 
+## Bounded long-term memory (v0.10.0)
+
+- Automatic memory is off by default. When enabled, completed Standard
+  dictations, notes, and conversations use the configured cloud reasoning
+  provider for bounded durable-fact extraction; memory itself stays in SQLite.
+- Migration v8 stores source-linked entities, aliases, facts, relationships,
+  and summaries with confidence and provisional/confirmed/contradicted state.
+  Two independent sources are required for confirmation, conflicting facts are
+  contradicted, and inactivity reduces retrieval confidence.
+- Confirmed memory is bounded to 12 records and can support contextual speech
+  correction. Conversation suggestions now use at most 24 recent turns, 6,000
+  transcript characters, and confirmed memory instead of the full transcript.
+- Deleting a source removes or downgrades its dependent memory, including when
+  deletion races a late cloud result. Settings provides localized enable and
+  reset controls across all nine locales.
+- Verification: 93 frontend tests and TypeScript checks pass; 282 Rust unit
+  tests and 6 streaming integration tests pass. The repository-wide strict
+  Clippy command remains blocked by pre-existing warnings outside this change.
+
 ## Automatic contextual speech correction (v0.9.0)
 
 - Standard dictation now has an opt-in reconciliation stage between cloud ASR

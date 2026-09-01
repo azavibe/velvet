@@ -1,4 +1,5 @@
 import type { DictionaryEntry } from "@/models/dictionary";
+import type { MemoryContextItem } from "@/services/tauriApi";
 
 export type ReconciliationStatus =
   | "disabled"
@@ -12,6 +13,7 @@ export interface ReconciliationContext {
   agentName: string;
   agentAliases: string[];
   recentTexts: string[];
+  knownMemories?: MemoryContextItem[];
   language?: string | null;
 }
 
@@ -19,7 +21,7 @@ export interface ReconciliationResult {
   text: string;
   status: ReconciliationStatus;
   confidence: number | null;
-  evidence: "dictionary" | "agent" | "recent" | null;
+  evidence: "dictionary" | "agent" | "recent" | "memory" | null;
 }
 
 export type ReconciliationModelCall = (
@@ -146,6 +148,16 @@ function recentEvidence(rawText: string, candidate: string, recentTexts: string[
   });
 }
 
+function memoryEvidence(
+  rawText: string,
+  candidate: string,
+  memories: MemoryContextItem[],
+): boolean {
+  return memories.some((memory) =>
+    recentEvidence(rawText, candidate, [memory.canonical_text, ...memory.aliases]),
+  );
+}
+
 function validateEvidence(
   rawText: string,
   candidate: string,
@@ -153,6 +165,7 @@ function validateEvidence(
 ): ReconciliationResult["evidence"] {
   if (dictionaryEvidence(rawText, candidate, context.dictionary)) return "dictionary";
   if (agentEvidence(rawText, candidate, context.agentName, context.agentAliases)) return "agent";
+  if (memoryEvidence(rawText, candidate, context.knownMemories ?? [])) return "memory";
   if (recentEvidence(rawText, candidate, context.recentTexts)) return "recent";
   return null;
 }
@@ -182,9 +195,16 @@ export function reconciliationPrompts(
       term: entry.term.slice(0, 100),
       aliases: entry.aliases.slice(0, 8).map((alias) => alias.slice(0, 100)),
     }));
+  const knownMemories = (context.knownMemories ?? [])
+    .slice(0, 12)
+    .map((memory, index) => ({
+      id: `M${index + 1}`,
+      text: memory.canonical_text.slice(0, 240),
+      aliases: memory.aliases.slice(0, 8).map((alias) => alias.slice(0, 100)),
+    }));
   const systemPrompt = [
     "You are a conservative speech-recognition reconciler.",
-    "Correct only likely ASR mistakes supported by the supplied dictionary, agent identity, or recent text.",
+    "Correct only likely ASR mistakes supported by the supplied dictionary, agent identity, confirmed memory, or recent text.",
     "Do not rewrite grammar, punctuation, tone, meaning, or formatting. Do not add facts.",
     "If evidence is weak or ambiguous, return the input unchanged.",
     "Return JSON only: {\"text\":string,\"confidence\":number}. Confidence must be between 0 and 1.",
@@ -194,6 +214,7 @@ export function reconciliationPrompts(
     language: context.language ?? null,
     agent: [context.agentName, ...context.agentAliases].filter(Boolean).slice(0, 12),
     dictionary,
+    confirmed_memory: knownMemories,
     recent_text: recentTexts.map((text, index) => ({ id: `R${index + 1}`, text })),
   });
   return { systemPrompt, userPrompt };

@@ -25,6 +25,7 @@ import {
 } from "./useTranscriptionPipeline";
 import { applyAlwaysDictionaryCorrections } from "@/models/dictionary";
 import { sanitizeAgentWakeEcho } from "@/services/agentEchoSanitizer";
+import { extractAndStoreMemory } from "@/services/memory";
 
 /** The backend owns prompt-echo suppression; preserve non-empty dictionary terms
  * because they may be exactly what the user spoke. */
@@ -278,7 +279,7 @@ export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecording
         finalText === correctedText && correctedText !== commandText ? "dictionary" : null,
       ].filter(Boolean);
 
-      await saveTranscription(
+      const transcriptionId = await saveTranscription(
         providerText,
         finalText !== providerText ? finalText : null,
         processingMethods.join("+") || "none",
@@ -291,6 +292,17 @@ export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecording
         reconciliation.confidence,
         reconciliation.evidence,
       );
+
+      // Learn only from provider speech, never from correction/enhancement
+      // output. Extraction is best-effort and cannot delay normal dictation.
+      if (settings.automaticMemoryEnabled) {
+        void extractAndStoreMemory(
+          providerText,
+          "dictation",
+          transcriptionId,
+          settings,
+        );
+      }
 
       setPhase("idle");
     } catch (e) {

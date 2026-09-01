@@ -41,6 +41,8 @@ export interface Settings {
   /** Conservative post-ASR correction using bounded dictionary and recent
    *  context. Independent from prose enhancement. */
   contextualCorrectionEnabled: boolean;
+  /** Opt-in extraction of durable facts into local, source-linked memory. */
+  automaticMemoryEnabled: boolean;
 
   // Hotkey
   dictationKey: string;
@@ -122,6 +124,7 @@ const DEFAULTS: Settings = {
   useCustomPrompt: false,
   customSystemPrompt: "",
   contextualCorrectionEnabled: false,
+  automaticMemoryEnabled: false,
   autoPaste: true,
   soundEnabled: true,
   dictationKey: "",
@@ -159,6 +162,7 @@ const STORE_KEYS = [
   "useReasoningModel", "reasoningModel", "reasoningProvider", "enhancementIntensity",
   "useCustomPrompt", "customSystemPrompt",
   "contextualCorrectionEnabled",
+  "automaticMemoryEnabled",
   "autoPaste", "soundEnabled", "dictationKey", "activationMode",
   "selectedMicDeviceId", "debugMode", "uiLanguage",
   "personas", "activePersonaId", "conversationTriggerMode", "conversationMicDeviceId",
