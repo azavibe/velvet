@@ -143,10 +143,14 @@ describe("completed transcription voice-command dispatch", () => {
 
   test("command authorization runs before arbitrary custom-dictionary replacement", async () => {
     const source = await Bun.file("src/hooks/useAudioRecording.ts").text();
-    const commandIndex = source.indexOf("onVoiceCommandRef.current(providerText");
+    const sanitizerIndex = source.indexOf("sanitizeAgentWakeEcho(");
+    const commandIndex = source.indexOf("onVoiceCommandRef.current(commandText");
     const dictionaryIndex = source.indexOf("applyAlwaysDictionaryCorrections(");
+    expect(sanitizerIndex).toBeGreaterThan(-1);
     expect(commandIndex).toBeGreaterThan(-1);
+    expect(commandIndex).toBeGreaterThan(sanitizerIndex);
     expect(dictionaryIndex).toBeGreaterThan(commandIndex);
+    expect(source).toMatch(/saveTranscription\(\s*providerText,/);
 
     const calls: Array<[string, string | null | undefined]> = [];
     const result = await dispatchCompletedVoiceCommand(

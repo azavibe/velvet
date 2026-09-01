@@ -35,6 +35,7 @@ import {
   type DictionaryEntry,
 } from "@/models/dictionary";
 import { providerDisplayName } from "@/components/settings/providerHelpers";
+import { sanitizeAgentWakeEcho } from "@/services/agentEchoSanitizer";
 
 interface RegistryProvider {
   id: string;
@@ -146,6 +147,8 @@ export function useLiveDictation({ onToast }: Options = {}) {
   const dictionaryRef = useRef<string[]>([]);
   const dictionaryEntriesRef = useRef<DictionaryEntry[]>([]);
   const protectedTermsRef = useRef<string[]>([]);
+  const agentNameRef = useRef<string>("");
+  const agentAliasesRef = useRef<string[]>([]);
   const sessionErrorRef = useRef<string | null>(null);
   const unlistenRef = useRef<(() => void)[]>([]);
   /** Serialises async utterance handlers. Tauri's listen() does not await the
@@ -199,16 +202,22 @@ export function useLiveDictation({ onToast }: Options = {}) {
               return;
             const providerText = sanitizeUtterance(payload.text);
             if (!providerText) return;
+            const deechoedText = sanitizeAgentWakeEcho(
+              providerText,
+              agentNameRef.current,
+              agentAliasesRef.current,
+            );
+            if (!deechoedText) return;
             if (
               isDictionaryEcho(
-                providerText,
+                deechoedText,
                 dictionaryRef.current,
                 protectedTermsRef.current,
               )
             )
               return;
             const cleaned = applyAlwaysDictionaryCorrections(
-              providerText,
+              deechoedText,
               dictionaryEntriesRef.current,
             );
             // Prefix + cleaned must be typed AND recorded as one unit —
@@ -417,6 +426,8 @@ export function useLiveDictation({ onToast }: Options = {}) {
         ...agentAliases,
         ...protectedDictionaryTerms(dict),
       ];
+      agentNameRef.current = agentName;
+      agentAliasesRef.current = agentAliases;
 
       // Snapshot foreground HWND BEFORE starting cpal (so overlay focus doesn't poison the snapshot)
       const hwnd = await getForegroundWindow();

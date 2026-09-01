@@ -19,6 +19,7 @@ use crate::audio::archive::{self, ArchiveFailure};
 use crate::audio::note_capture::{NoteCapture, NoteCaptureState, NoteChunk};
 use crate::audio::recorder::TARGET_SAMPLE_RATE;
 use crate::database::{Database, Note};
+use crate::tray::{self, RecordingSource};
 
 pub struct NoteAudioArchive {
     writer: Mutex<Option<ActiveWav>>,
@@ -273,6 +274,8 @@ pub async fn start_note_capture(
         }
     };
 
+    tray::start_recording(&app, RecordingSource::Note);
+
     let app_for_consumer = app.clone();
     let api_key = groq_api_key;
     let (archive_done_tx, archive_done_rx) = mpsc::channel();
@@ -360,14 +363,22 @@ async fn handle_note_chunk(app: AppHandle, note_id: i64, chunk: NoteChunk, api_k
 }
 
 #[tauri::command]
-pub fn pause_note_capture(note_state: State<'_, Arc<NoteCaptureState>>) -> Result<(), String> {
+pub fn pause_note_capture(
+    app: AppHandle,
+    note_state: State<'_, Arc<NoteCaptureState>>,
+) -> Result<(), String> {
     note_state.pause();
+    tray::stop_recording(&app, RecordingSource::Note, None);
     Ok(())
 }
 
 #[tauri::command]
-pub fn resume_note_capture(note_state: State<'_, Arc<NoteCaptureState>>) -> Result<(), String> {
+pub fn resume_note_capture(
+    app: AppHandle,
+    note_state: State<'_, Arc<NoteCaptureState>>,
+) -> Result<(), String> {
     note_state.resume();
+    tray::start_recording(&app, RecordingSource::Note);
     Ok(())
 }
 
@@ -377,6 +388,7 @@ pub fn stop_note_capture(
     note_state: State<'_, Arc<NoteCaptureState>>,
 ) -> Result<(), String> {
     NoteCapture::stop(&**note_state).str_err()?;
+    tray::stop_recording(&app, RecordingSource::Note, None);
     let recordings_root = recordings_dir(&app).str_err()?;
     let db = app.state::<Database>();
     let archive = app.state::<NoteAudioArchive>();

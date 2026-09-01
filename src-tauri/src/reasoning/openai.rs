@@ -190,7 +190,7 @@ async fn complete_chat(
     // OpenRouter requires these headers for proper authentication routing
     if base_url.contains("openrouter.ai") {
         req_builder = req_builder
-            .header("HTTP-Referer", "https://github.com/azavibe/velvet")
+            .header("HTTP-Referer", "https://github.com/azavibe/agenda")
             .header("X-Title", "Aral");
     }
 

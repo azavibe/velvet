@@ -1,5 +1,18 @@
 # Progress
 
+## Recording visibility and release correction (v0.8.10)
+
+- Wake-name echo cleanup now runs before command routing and typing. The tray
+  turns magenta for every active capture mode, including when the overlay is
+  hidden, without changing the overlay animation.
+- Release metadata is synchronized at `0.8.10` across the frontend, Tauri,
+  Cargo, and the lockfile. A regression test enforces that agreement and the
+  presence of matching changelog Highlights so the What's New window advances
+  with future versions.
+- Verification: 81 frontend tests, TypeScript check, production frontend build,
+  274 Rust unit tests, and 6 streaming integration tests pass. Packaged Windows
+  tray checks remain a manual release verification item.
+
 ## Semantic Punctuation Restoration (v0.8.6)
 
 - Standard and Full enhancement now treat punctuation-free transcripts as an
