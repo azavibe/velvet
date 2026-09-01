@@ -20,6 +20,7 @@ import {
   transcribe,
   retryCommandTranscription,
   enhance,
+  reconcile,
   formatOutput,
 } from "./useTranscriptionPipeline";
 import { applyAlwaysDictionaryCorrections } from "@/models/dictionary";
@@ -182,15 +183,29 @@ export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecording
         return;
       }
 
-      const commandText = sanitizeAgentWakeEcho(
+      const reconciliation = await reconcile(
         providerText,
+        settings,
+        detectedLanguage,
+      );
+      if (import.meta.env.DEV || settings.debugMode) {
+        console.debug("[Whisperi] contextual reconciliation", {
+          status: reconciliation.status,
+          confidence: reconciliation.confidence,
+          evidence: reconciliation.evidence,
+        });
+      }
+
+      const reconciledText = reconciliation.text;
+      const commandText = sanitizeAgentWakeEcho(
+        reconciledText,
         settings.agentName,
         settings.agentAliases,
       );
-      const agentEchoRemoved = commandText !== providerText;
+      const agentEchoRemoved = commandText !== reconciledText;
       if (agentEchoRemoved && (import.meta.env.DEV || settings.debugMode)) {
         console.debug("[Whisperi] code=agent_wake_echo_removed", {
-          beforeCharacters: providerText.length,
+          beforeCharacters: reconciledText.length,
           afterCharacters: commandText.length,
         });
       }
@@ -249,20 +264,25 @@ export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecording
         await pasteText(outputText);
       }
 
+      const processingMethods = [
+        reconciliation.status === "accepted" ? "reconciliation" : null,
+        agentEchoRemoved ? "agent-echo" : null,
+        rawAiResponse !== null ? "ai" : null,
+        finalText === correctedText && correctedText !== commandText ? "dictionary" : null,
+      ].filter(Boolean);
+
       await saveTranscription(
         providerText,
         finalText !== providerText ? finalText : null,
-        rawAiResponse !== null
-          ? "ai"
-          : agentEchoRemoved
-            ? "agent-echo"
-            : finalText !== providerText
-              ? "dictionary"
-              : "none",
+        processingMethods.join("+") || "none",
         settings.agentName,
         null,
         durationMs,
         audioData,
+        reconciliation.status === "accepted" ? reconciliation.text : null,
+        reconciliation.status,
+        reconciliation.confidence,
+        reconciliation.evidence,
       );
 
       setPhase("idle");

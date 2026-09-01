@@ -1,5 +1,20 @@
 # Progress
 
+## Automatic contextual speech correction (v0.9.0)
+
+- Standard dictation now has an opt-in reconciliation stage between cloud ASR
+  and command routing. It uses bounded dictionary, agent, language, and recent
+  dictation context, and accepts only small high-confidence edits backed by
+  local evidence.
+- Raw ASR, accepted reconciliation, final enhanced text, status, confidence,
+  and evidence type are stored separately. Expanded History cards expose each
+  text layer, while uncertainty, timeout, or provider failure preserves raw ASR.
+- Direct conversation and text-to-speech are deferred. v0.10 memory can later
+  add durable known entities, repeated evidence, contradiction, and inactivity.
+- Verification: 89 frontend tests, TypeScript check, 276 Rust unit tests, and 6
+  streaming integration tests pass. Packaged Windows provider and History UI
+  verification remains a manual release check.
+
 ## Recording visibility and release correction (v0.8.10)
 
 - Wake-name echo cleanup now runs before command routing and typing. The tray

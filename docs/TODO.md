@@ -66,31 +66,17 @@ Detailed [implementation plan](plans/conversational-assistant.md).
   - [ ] Preserve the original MIT license and upstream attribution.
   - [ ] Verify upgrade installation from v0.8.8 and first-run migration on Windows.
 
-### v0.9.0 — Direct conversation and text-to-speech
+### v0.9.0 — Automatic contextual speech correction
 
-- [ ] Route non-command speech addressed to the configured agent into persistent direct conversation turns.
-  - [ ] Reuse the existing conversation tables, reasoning settings, Conversation window, personas, and history.
-  - [ ] Persist raw user text, reconciled user text, and assistant answers without creating duplicate transcription history.
-  - [ ] Keep ordinary dictation pasting and whole-utterance voice commands unchanged.
-- [ ] Add OpenRouter TTS using the existing API key and the default Qwen Audio 3.0 TTS Flash model.
-  - [ ] Add a small Conversations-area TTS toggle/model setting with cached speech-model discovery and custom model support.
-  - [ ] Reuse the History playback layer for MP3 playback and preserve visible text when synthesis fails.
-- [ ] Add interruption and stale-result protection for direct answers and TTS.
-  - [ ] Stop speech immediately when new user recording begins.
-  - [ ] Prevent synthesized speaker output from becoming a new voice command or user turn.
-- [ ] Extend Conversation to speakerphone and in-room calls without adding another capture mode.
-  - [ ] Treat silent-loopback sessions as mixed microphone audio instead of labeling every speaker “Me.”
-  - [ ] Accept configured-agent commands such as “start call” and “call” as Conversation aliases.
-  - [ ] Automatically structure support-call cleanup around instructions, forms, payments, contacts, deadlines, and unresolved questions.
-  - [ ] Reuse the existing conversation, audio, history, cleanup, persona, and suggestion infrastructure.
-
-### v0.9.x — Automatic contextual speech correction
-
-- [ ] Add conservative post-ASR reconciliation before command detection, enhancement, persistence, and direct reasoning.
-  - [ ] Use language, current context, recent utterances, dictionary terms, known entities, and repeated high-confidence evidence.
-  - [ ] Preserve raw ASR beside reconciled text and fall back safely on uncertainty or provider failure.
-  - [ ] Promote only repeated consistent corrections and reduce confidence after contradiction or inactivity.
-- [ ] Make contextual correction reversible, bounded, debuggable, and separate from normal prose enhancement.
+- [x] Add conservative post-ASR reconciliation before command detection, enhancement, and persistence in Standard dictation.
+  - [x] Use language, recent dictations, dictionary terms, and configured-agent variants as bounded evidence.
+  - [x] Preserve raw ASR beside reconciled and final text and fall back safely on uncertainty, timeout, or provider failure.
+  - [x] Reject paraphrases and unsupported corrections with local edit-distance and evidence checks.
+- [x] Make contextual correction optional, bounded, debuggable, and separate from normal prose enhancement.
+  - [x] Store correction status, confidence, and evidence category without logging the user’s speech.
+  - [x] Show raw, corrected, and final text separately in expanded History entries.
+- [ ] Extend reconciliation to Live dictation after a low-latency streaming design is verified.
+- [ ] Use durable known entities, repeated evidence, contradiction, and inactivity once v0.10 memory exists.
 
 ### v0.10.0 — Long-term memory and knowledge
 
@@ -99,6 +85,12 @@ Detailed [implementation plan](plans/conversational-assistant.md).
   - [ ] Retrieve only bounded recent context, rolling summaries, relevant SQLite results, aliases, recency, confidence, persona, and topic.
   - [ ] Remove or downgrade source-dependent memory when its dictation, note, or conversation is deleted.
 - [ ] Add an automatic-memory toggle and reset action without introducing a graph editor or training interface.
+
+### Deferred — Direct conversation and text-to-speech
+
+- [ ] Route non-command speech addressed to the configured agent into persistent direct conversation turns.
+- [ ] Add optional OpenRouter TTS, interruption, and anti-feedback protection for direct answers.
+- [ ] Extend Conversation to speakerphone and in-room calls without adding another capture mode.
 
 ### Future — Disclosed meeting participation
 

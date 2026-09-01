@@ -74,6 +74,15 @@ export default function TranscriptionSection({ settings, update }: SectionProps)
             settings={settings}
             update={update}
           />
+          <SettingsRow
+            label={t("transcription.contextualCorrection.label")}
+            description={t("transcription.contextualCorrection.description")}
+          >
+            <Toggle
+              checked={settings.contextualCorrectionEnabled}
+              onChange={(value) => update("contextualCorrectionEnabled", value)}
+            />
+          </SettingsRow>
         </>
       )}
 

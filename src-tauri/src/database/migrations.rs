@@ -180,6 +180,36 @@ pub fn run(conn: &Connection) -> Result<()> {
         conn.execute_batch("PRAGMA user_version = 6;")?;
     }
 
+    // v7: preserve the conservative post-ASR reconciliation separately from
+    // both raw provider output and later prose enhancement.
+    if version < 7 {
+        if !column_exists(conn, "transcriptions", "reconciled_text")? {
+            conn.execute(
+                "ALTER TABLE transcriptions ADD COLUMN reconciled_text TEXT",
+                [],
+            )?;
+        }
+        if !column_exists(conn, "transcriptions", "reconciliation_status")? {
+            conn.execute(
+                "ALTER TABLE transcriptions ADD COLUMN reconciliation_status TEXT NOT NULL DEFAULT 'disabled'",
+                [],
+            )?;
+        }
+        if !column_exists(conn, "transcriptions", "reconciliation_confidence")? {
+            conn.execute(
+                "ALTER TABLE transcriptions ADD COLUMN reconciliation_confidence REAL",
+                [],
+            )?;
+        }
+        if !column_exists(conn, "transcriptions", "reconciliation_evidence")? {
+            conn.execute(
+                "ALTER TABLE transcriptions ADD COLUMN reconciliation_evidence TEXT",
+                [],
+            )?;
+        }
+        conn.execute_batch("PRAGMA user_version = 7;")?;
+    }
+
     #[cfg(debug_assertions)]
     if v6_pending {
         log::info!(
@@ -252,13 +282,13 @@ mod tests {
     }
 
     #[test]
-    fn full_run_bumps_user_version_to_6() {
+    fn full_run_bumps_user_version_to_7() {
         let conn = Connection::open_in_memory().unwrap();
         run(&conn).unwrap();
         let v: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(v, 6);
+        assert_eq!(v, 7);
     }
 
     #[test]
@@ -290,7 +320,7 @@ mod tests {
         let v: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(v, 6);
+        assert_eq!(v, 7);
     }
 
     #[test]
@@ -476,5 +506,37 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         run(&conn).unwrap();
         run(&conn).unwrap();
+    }
+
+    #[test]
+    fn v7_adds_reconciliation_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        run(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO transcriptions
+             (original_text, reconciled_text, reconciliation_status,
+              reconciliation_confidence, reconciliation_evidence)
+             VALUES ('raw', 'corrected', 'accepted', 0.97, 'dictionary')",
+            [],
+        )
+        .unwrap();
+        let row: (String, String, f64, String) = conn
+            .query_row(
+                "SELECT reconciled_text, reconciliation_status,
+                        reconciliation_confidence, reconciliation_evidence
+                 FROM transcriptions WHERE original_text = 'raw'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            row,
+            (
+                "corrected".into(),
+                "accepted".into(),
+                0.97,
+                "dictionary".into()
+            )
+        );
     }
 }

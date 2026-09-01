@@ -52,6 +52,8 @@
 
   "transcription.title": "クラウドプロバイダー",
   "transcription.description": "クラウド文字起こしサービスを選択",
+  "transcription.contextualCorrection.label": "文脈に基づく自動音声修正",
+  "transcription.contextualCorrection.description": "辞書と最近の音声入力を使い、認識ミスの可能性が高い箇所だけを慎重に修正します。元のテキストは履歴に保持され、選択されたテキストは AI プロバイダーで処理されます。",
   "transcription.mode.label": "モード",
   "transcription.mode.standard": "標準",
   "transcription.mode.standard.description": "録音後、停止時に文字起こしを開始します。",
@@ -257,6 +259,9 @@
   "history.loading": "Loading…",
   "history.audioRecoveryFailed": "音声の復旧に失敗しました",
   "history.emptyTranscript": "(no transcript)",
+  "history.rawAsr": "元の音声認識",
+  "history.contextualCorrection": "文脈による修正",
+  "history.finalText": "最終テキスト",
   "history.speakerMe": "Me",
   "history.speakerThem": "Them",
   "history.audio.title": "アーカイブ音声",

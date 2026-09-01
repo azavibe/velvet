@@ -68,6 +68,10 @@ pub struct Transcription {
     pub timestamp: String,
     pub original_text: String,
     pub processed_text: Option<String>,
+    pub reconciled_text: Option<String>,
+    pub reconciliation_status: String,
+    pub reconciliation_confidence: Option<f64>,
+    pub reconciliation_evidence: Option<String>,
     pub is_processed: bool,
     pub processing_method: String,
     pub agent_name: Option<String>,
@@ -716,6 +720,7 @@ impl Database {
         Ok(report)
     }
 
+    #[cfg(test)]
     pub fn save_transcription(
         &self,
         original_text: &str,
@@ -724,6 +729,34 @@ impl Database {
         agent_name: Option<&str>,
         error: Option<&str>,
         duration_ms: Option<i64>,
+    ) -> Result<i64> {
+        self.save_transcription_with_reconciliation(
+            original_text,
+            processed_text,
+            processing_method,
+            agent_name,
+            error,
+            duration_ms,
+            None,
+            "disabled",
+            None,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_transcription_with_reconciliation(
+        &self,
+        original_text: &str,
+        processed_text: Option<&str>,
+        processing_method: &str,
+        agent_name: Option<&str>,
+        error: Option<&str>,
+        duration_ms: Option<i64>,
+        reconciled_text: Option<&str>,
+        reconciliation_status: &str,
+        reconciliation_confidence: Option<f64>,
+        reconciliation_evidence: Option<&str>,
     ) -> Result<i64> {
         // Count words on the final user-visible text — processed_text when AI
         // enhancement is on, otherwise the raw transcription.
@@ -734,8 +767,9 @@ impl Database {
         conn.execute(
             "INSERT INTO transcriptions
                (original_text, processed_text, is_processed, processing_method,
-                agent_name, error, duration_ms, word_count)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                agent_name, error, duration_ms, word_count, reconciled_text,
+                reconciliation_status, reconciliation_confidence, reconciliation_evidence)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             rusqlite::params![
                 original_text,
                 processed_text,
@@ -745,6 +779,10 @@ impl Database {
                 error,
                 duration_ms,
                 word_count,
+                reconciled_text,
+                reconciliation_status,
+                reconciliation_confidence,
+                reconciliation_evidence,
             ],
         )?;
         Ok(conn.last_insert_rowid())
@@ -753,7 +791,8 @@ impl Database {
     pub fn get_transcriptions(&self, limit: u32, offset: u32) -> Result<Vec<Transcription>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, timestamp, original_text, processed_text, is_processed, processing_method, agent_name, error, duration_ms, word_count, audio_path
+            "SELECT id, timestamp, original_text, processed_text, is_processed, processing_method, agent_name, error, duration_ms, word_count, audio_path,
+                    reconciled_text, reconciliation_status, reconciliation_confidence, reconciliation_evidence
              FROM transcriptions ORDER BY id DESC LIMIT ?1 OFFSET ?2",
         )?;
 
@@ -771,6 +810,10 @@ impl Database {
                 word_count: row.get(9)?,
                 audio_path: None,
                 audio_asset: None,
+                reconciled_text: row.get(11)?,
+                reconciliation_status: row.get(12)?,
+                reconciliation_confidence: row.get(13)?,
+                reconciliation_evidence: row.get(14)?,
             })
         })?;
 
@@ -1424,6 +1467,40 @@ mod tests {
         // Counts processed_text ("hello world") = 2, not original ("um hello") = 2.
         // Same value here by coincidence — assert nonzero to prove it ran.
         assert_eq!(wc, 2);
+    }
+
+    #[test]
+    fn reconciliation_round_trip_preserves_raw_and_audit_fields() {
+        let db = Database::new_in_memory().unwrap();
+        let id = db
+            .save_transcription_with_reconciliation(
+                "Schedule Acme tomorrow",
+                Some("Schedule Acme Corp tomorrow."),
+                "reconciliation+ai",
+                Some("Aral"),
+                None,
+                Some(1200),
+                Some("Schedule Acme Corp tomorrow"),
+                "accepted",
+                Some(0.97),
+                Some("recent"),
+            )
+            .unwrap();
+
+        let rows = db.get_transcriptions(10, 0).unwrap();
+        let item = rows.iter().find(|item| item.id == id).unwrap();
+        assert_eq!(item.original_text, "Schedule Acme tomorrow");
+        assert_eq!(
+            item.reconciled_text.as_deref(),
+            Some("Schedule Acme Corp tomorrow")
+        );
+        assert_eq!(
+            item.processed_text.as_deref(),
+            Some("Schedule Acme Corp tomorrow.")
+        );
+        assert_eq!(item.reconciliation_status, "accepted");
+        assert_eq!(item.reconciliation_confidence, Some(0.97));
+        assert_eq!(item.reconciliation_evidence.as_deref(), Some("recent"));
     }
 
     #[test]

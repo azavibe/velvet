@@ -45,6 +45,9 @@
   "history.loading": "Loading…",
   "history.audioRecoveryFailed": "Audio recovery failed",
   "history.emptyTranscript": "(no transcript)",
+  "history.rawAsr": "Raw speech recognition",
+  "history.contextualCorrection": "Contextual correction",
+  "history.finalText": "Final text",
   "history.speakerMe": "Me",
   "history.speakerThem": "Them",
   "history.audio.title": "Archived audio",
@@ -95,6 +98,8 @@
 
   "transcription.title": "Cloud Provider",
   "transcription.description": "Choose a cloud transcription service",
+  "transcription.contextualCorrection.label": "Automatic contextual speech correction",
+  "transcription.contextualCorrection.description": "Conservatively correct likely recognition mistakes using your dictionary and recent dictations. Raw speech remains in History; selected text is processed by your AI provider.",
   "transcription.mode.label": "Mode",
   "transcription.mode.standard": "Standard",
   "transcription.mode.standard.description": "Records, then transcribes when you stop.",

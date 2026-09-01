@@ -7,6 +7,7 @@ import {
   getAgentName,
   getAgentAliases,
   getCustomDictionary,
+  getTranscriptions,
 } from "@/services/tauriApi";
 import {
   getSystemPrompt,
@@ -23,6 +24,10 @@ import {
   protectedDictionaryTerms,
   type DictionaryEntry,
 } from "@/models/dictionary";
+import {
+  reconcileSpeech,
+  type ReconciliationResult,
+} from "@/services/contextualReconciliation";
 
 export interface TranscriptionSettings {
   cloudProvider: string | null;
@@ -38,6 +43,7 @@ export interface TranscriptionSettings {
   autoPaste: boolean | null;
   useCustomPrompt: boolean | null;
   customSystemPrompt: string | null;
+  contextualCorrectionEnabled: boolean | null;
   agentName: string;
   agentAliases: string[];
   debugMode: boolean | null;
@@ -60,6 +66,7 @@ export async function loadTranscriptionSettings(): Promise<TranscriptionSettings
     autoPaste,
     useCustomPrompt,
     customSystemPrompt,
+    contextualCorrectionEnabled,
     agentName,
     agentAliases,
     debugMode,
@@ -78,6 +85,7 @@ export async function loadTranscriptionSettings(): Promise<TranscriptionSettings
     getSetting<boolean>("autoPaste"),
     getSetting<boolean>("useCustomPrompt"),
     getSetting<string>("customSystemPrompt"),
+    getSetting<boolean>("contextualCorrectionEnabled"),
     getAgentName(),
     getAgentAliases(),
     getSetting<boolean>("debugMode"),
@@ -98,6 +106,7 @@ export async function loadTranscriptionSettings(): Promise<TranscriptionSettings
     autoPaste,
     useCustomPrompt,
     customSystemPrompt,
+    contextualCorrectionEnabled,
     agentName,
     agentAliases,
     debugMode,
@@ -210,6 +219,63 @@ export async function retryCommandTranscription(
 export interface EnhancementResult {
   finalText: string;
   rawAiResponse: string | null;
+}
+
+/** Run conservative post-ASR reconciliation before commands or enhancement.
+ *  Provider/key failures are deliberately non-fatal: raw ASR continues. */
+export async function reconcile(
+  rawText: string,
+  settings: TranscriptionSettings,
+  detectedLanguage: string | null = null,
+): Promise<ReconciliationResult> {
+  if (
+    !settings.contextualCorrectionEnabled
+    || !settings.reasoningModel
+    || !settings.reasoningProvider
+  ) {
+    return {
+      text: rawText,
+      status: "disabled",
+      confidence: null,
+      evidence: null,
+    };
+  }
+
+  const apiKey = await getApiKey(settings.reasoningProvider);
+  if (!apiKey) {
+    return { text: rawText, status: "failed", confidence: null, evidence: null };
+  }
+  let recentTexts: string[] = [];
+  try {
+    const recent = await getTranscriptions(8, 0);
+    recentTexts = recent.map(
+      (item) => item.processed_text || item.reconciled_text || item.original_text,
+    );
+  } catch {
+    // Context lookup is optional. Dictionary/agent evidence can still work.
+  }
+  const language = effectiveLanguage(requestedLanguage(settings), detectedLanguage);
+  return reconcileSpeech(
+    rawText,
+    {
+      dictionary: settings.dictionary,
+      agentName: settings.agentName,
+      agentAliases: settings.agentAliases,
+      recentTexts,
+      language,
+    },
+    (systemPrompt, userPrompt) =>
+      processReasoning(
+        userPrompt,
+        settings.reasoningModel!,
+        settings.reasoningProvider!,
+        systemPrompt,
+        apiKey,
+        300,
+        0,
+        language,
+      ),
+  );
 }
 
 /** Pick the language for the enhancement step: prefer the backend-detected

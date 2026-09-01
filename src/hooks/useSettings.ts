@@ -38,6 +38,9 @@ export interface Settings {
   enhancementIntensity: EnhancementIntensity;
   useCustomPrompt: boolean;
   customSystemPrompt: string;
+  /** Conservative post-ASR correction using bounded dictionary and recent
+   *  context. Independent from prose enhancement. */
+  contextualCorrectionEnabled: boolean;
 
   // Hotkey
   dictationKey: string;
@@ -118,6 +121,7 @@ const DEFAULTS: Settings = {
   enhancementIntensity: "standard",
   useCustomPrompt: false,
   customSystemPrompt: "",
+  contextualCorrectionEnabled: false,
   autoPaste: true,
   soundEnabled: true,
   dictationKey: "",
@@ -154,6 +158,7 @@ const STORE_KEYS = [
   "dictationMode", "liveTranscriptionProvider", "liveTranscriptionModel", "liveEnhancement", "liveLastError",
   "useReasoningModel", "reasoningModel", "reasoningProvider", "enhancementIntensity",
   "useCustomPrompt", "customSystemPrompt",
+  "contextualCorrectionEnabled",
   "autoPaste", "soundEnabled", "dictationKey", "activationMode",
   "selectedMicDeviceId", "debugMode", "uiLanguage",
   "personas", "activePersonaId", "conversationTriggerMode", "conversationMicDeviceId",

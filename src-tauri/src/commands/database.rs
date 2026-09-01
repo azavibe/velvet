@@ -18,15 +18,23 @@ pub async fn save_transcription(
     // History & Analytics. The command completes only after the asset is
     // ready or durably marked failed.
     audio_data: Option<Vec<u8>>,
+    reconciled_text: Option<String>,
+    reconciliation_status: String,
+    reconciliation_confidence: Option<f64>,
+    reconciliation_evidence: Option<String>,
 ) -> Result<i64, String> {
     let id = db
-        .save_transcription(
+        .save_transcription_with_reconciliation(
             &original_text,
             processed_text.as_deref(),
             &processing_method,
             agent_name.as_deref(),
             error.as_deref(),
             duration_ms,
+            reconciled_text.as_deref(),
+            &reconciliation_status,
+            reconciliation_confidence,
+            reconciliation_evidence.as_deref(),
         )
         .str_err()?;
 
