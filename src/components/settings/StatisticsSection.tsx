@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Copy, Trash2, ChevronDown, Mic, MessagesSquare, NotebookPen, Pencil, Sparkles, Mic2, RefreshCw, AlertTriangle } from "lucide-react";
+import { Copy, Trash2, ChevronDown, Mic, MessagesSquare, NotebookPen, Pencil, Sparkles, Mic2, RefreshCw, AlertTriangle, FolderOpen } from "lucide-react";
 import {
   getStats,
   getTranscriptions,
@@ -452,6 +452,34 @@ export default function StatisticsSection({ settings, toast }: { settings: Setti
     }
   };
 
+  const recordingPaths = (item: HistoryItem): string[] => {
+    if (item.kind === "dictation") {
+      return item.data.audio_asset?.path ? [item.data.audio_asset.path] : [];
+    }
+    if (item.kind === "conversation") {
+      return [item.data.audio_asset_me?.path, item.data.audio_asset_them?.path].filter(
+        (path): path is string => Boolean(path),
+      );
+    }
+    return item.data.audio_segments
+      .map((asset) => asset.path)
+      .filter((path): path is string => Boolean(path));
+  };
+
+  const handleOpenRecordingFolder = async (item: HistoryItem) => {
+    const paths = recordingPaths(item);
+    if (paths.length === 0) {
+      toast?.({ title: t("history.openFolderNoAudio"), variant: "destructive" });
+      return;
+    }
+    try {
+      const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
+      await revealItemInDir(paths);
+    } catch (e) {
+      toast?.({ title: t("history.openFolderFailed"), description: String(e), variant: "destructive" });
+    }
+  };
+
   const handleRetryTranscription = async (
     item: Extract<HistoryItem, { kind: "dictation" }>,
   ) => {
@@ -874,6 +902,14 @@ export default function StatisticsSection({ settings, toast }: { settings: Setti
                               <Copy className="w-3.5 h-3.5" /> {t("history.copy")}
                             </Button>
                           )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => void handleOpenRecordingFolder(item)}
+                            disabled={recordingPaths(item).length === 0}
+                          >
+                            <FolderOpen className="w-3.5 h-3.5" /> {t("history.openFolder")}
+                          </Button>
                           {isConfirming ? (
                             <>
                               <span className="text-xs text-muted-foreground">{t("history.confirmDelete")}</span>

@@ -1,5 +1,5 @@
 {
-  "settings.title": "Configuración de Aral",
+  "settings.title": "Configuración de Agenda",
   "settings.loading": "Cargando configuración...",
 
   "nav.general": "General",
@@ -44,7 +44,7 @@
   "general.mic.default": "(Predeterminado)",
   "general.behavior.title": "Comportamiento",
   "general.behavior.launchStartup": "Iniciar con el sistema",
-  "general.behavior.launchStartupDesc": "Iniciar Aral al iniciar sesión en Windows",
+  "general.behavior.launchStartupDesc": "Iniciar Agenda al iniciar sesión en Windows",
   "general.behavior.autoPaste": "Pegar automáticamente en el portapapeles",
   "general.behavior.autoPasteDesc": "Copiar el texto transcrito al portapapeles y pegarlo en la ventana activa",
   "general.behavior.soundEffects": "Efectos de sonido",
@@ -135,7 +135,7 @@
 
   "agent.name.title": "Nombre del agente",
   "agent.name.description": "Cuando diga este nombre durante el dictado, la IA cambiará del modo de limpieza de transcripción al modo de conversación — responderá preguntas y seguirá instrucciones.",
-  "agent.name.placeholder": "Aral",
+  "agent.name.placeholder": "Agenda",
   "agent.aliases.title": "Alias (opcional)",
   "agent.aliases.description": "Ortografías alternativas o transliteraciones del nombre del agente. Útil cuando el reconocimiento de voz no reconoce nombres en otros idiomas. Hasta 2 alias.",
   "agent.aliases.placeholder1": "ej. Wisperi",
@@ -151,7 +151,7 @@
   "developer.data.historyCleared": "Historial borrado",
   "developer.data.clearFailed": "Error al borrar el historial",
 
-  "about.title": "Aral",
+  "about.title": "Agenda",
   "about.description": "Dictado de escritorio con transcripción en la nube y local. Construido con Tauri y React.",
   "about.updates.title": "Actualizaciones",
   "about.updates.description": "Buscar nuevas versiones",
@@ -186,7 +186,7 @@
   "overlay.menu.settings": "Configuración",
   "overlay.menu.cancel": "Cancelar grabación",
   "overlay.menu.quit": "Salir",
-  "overlay.notification.title": "Aral",
+  "overlay.notification.title": "Agenda",
   "overlay.live.connecting": "Conectando…",
   "overlay.live.streaming": "Escuchando…",
   "overlay.live.polishing": "Mejorando…",
@@ -253,7 +253,7 @@
   "micWarning": {
     "noDevice": {
       "title": "No se detectó ningún micrófono",
-      "body": "Aral no pudo encontrar un micrófono, por lo que no se puede iniciar la grabación. Conecte un micrófono y asegúrese de que esté habilitado en la configuración de sonido del sistema, luego inténtelo de nuevo."
+      "body": "Agenda no pudo encontrar un micrófono, por lo que no se puede iniciar la grabación. Conecte un micrófono y asegúrese de que esté habilitado en la configuración de sonido del sistema, luego inténtelo de nuevo."
     },
     "selectedMissing": {
       "title": "Micrófono no disponible",
@@ -269,6 +269,9 @@
   "history.copy": "Copy",
   "history.copied": "Copied to clipboard",
   "history.copyFailed": "Copy failed",
+  "history.openFolder": "Abrir en carpeta",
+  "history.openFolderFailed": "No se pudo abrir la carpeta de grabaciones",
+  "history.openFolderNoAudio": "No hay audio archivado disponible",
   "history.delete": "Delete",
   "history.deleteFailed": "Delete failed",
   "history.confirmDelete": "Delete this recording?",

@@ -109,9 +109,9 @@ export interface Settings {
   openrouterApiKey: string;
 }
 
-/** The agent name shipped as the default before the app was renamed to
- *  Aral — see the migration in `load()`. */
-const LEGACY_AGENT_NAME = "Whisperi";
+/** Agent names shipped as defaults before the Agenda rename. Custom names
+ *  are left untouched; only these exact historical defaults migrate. */
+const LEGACY_AGENT_NAMES = new Set(["Whisperi", "Aral"]);
 
 const DEFAULTS: Settings = {
   preferredLanguage: "auto",
@@ -140,7 +140,7 @@ const DEFAULTS: Settings = {
   liveEnhancement: true,
   liveLastError: "",
   selectedMicDeviceId: "",
-  agentName: "Aral",
+  agentName: "Agenda",
   agentAliases: [],
   personas: DEFAULT_PERSONAS,
   activePersonaId: DEFAULT_PERSONAS[0].id,
@@ -258,11 +258,9 @@ export function useSettings() {
       }
 
       resolved.agentName = agentNameVal;
-      // Migration: the app was renamed Whisperi → Aral, but only the default
-      // changed — an install that had the old name persisted would keep
-      // addressing an agent by the old app's name. Voice commands key off
-      // this exact name, so a stale value makes them silently do nothing.
-      if (resolved.agentName === LEGACY_AGENT_NAME) {
+      // Keep existing installs on the current wake word after a product
+      // rename, while preserving every user-defined agent name.
+      if (LEGACY_AGENT_NAMES.has(resolved.agentName)) {
         resolved.agentName = DEFAULTS.agentName;
         setAgentNameApi(DEFAULTS.agentName);
       }

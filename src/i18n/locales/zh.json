@@ -1,5 +1,5 @@
 {
-  "settings.title": "Aral 设置",
+  "settings.title": "Agenda 设置",
   "settings.loading": "正在加载设置...",
 
   "nav.general": "通用",
@@ -44,7 +44,7 @@
   "general.mic.default": "（默认）",
   "general.behavior.title": "行为",
   "general.behavior.launchStartup": "开机启动",
-  "general.behavior.launchStartupDesc": "登录 Windows 时自动启动 Aral",
+  "general.behavior.launchStartupDesc": "登录 Windows 时自动启动 Agenda",
   "general.behavior.autoPaste": "自动粘贴到剪贴板",
   "general.behavior.autoPasteDesc": "将转录文本复制到剪贴板并粘贴到活动窗口",
   "general.behavior.soundEffects": "音效",
@@ -135,7 +135,7 @@
 
   "agent.name.title": "助手名称",
   "agent.name.description": "在听写时说出此名称，AI 将从转录整理模式切换为对话回复模式——它会回答问题并执行指令，而不仅仅是整理您的语音。",
-  "agent.name.placeholder": "Aral",
+  "agent.name.placeholder": "Agenda",
   "agent.aliases.title": "别名（可选）",
   "agent.aliases.description": "助手名称的替代拼写或音译。当语音转文字无法正确识别非英语名称时很有用。最多 2 个别名。",
   "agent.aliases.placeholder1": "例如 维斯珀里",
@@ -151,7 +151,7 @@
   "developer.data.historyCleared": "历史已清除",
   "developer.data.clearFailed": "清除历史失败",
 
-  "about.title": "Aral",
+  "about.title": "Agenda",
   "about.description": "支持云端和本地转录的桌面听写工具。基于 Tauri 和 React 构建。",
   "about.updates.title": "更新",
   "about.updates.description": "检查新版本",
@@ -186,7 +186,7 @@
   "overlay.menu.settings": "设置",
   "overlay.menu.cancel": "取消录音",
   "overlay.menu.quit": "退出",
-  "overlay.notification.title": "Aral",
+  "overlay.notification.title": "Agenda",
   "overlay.live.connecting": "连接中…",
   "overlay.live.streaming": "正在听写…",
   "overlay.live.polishing": "润色中…",
@@ -240,7 +240,7 @@
   "micWarning": {
     "noDevice": {
       "title": "未检测到麦克风",
-      "body": "Aral 未能找到麦克风，因此无法开始录音。请连接一个麦克风，并确保它已在系统声音设置中启用，然后重试。"
+      "body": "Agenda 未能找到麦克风，因此无法开始录音。请连接一个麦克风，并确保它已在系统声音设置中启用，然后重试。"
     },
     "selectedMissing": {
       "title": "麦克风不可用",
@@ -269,6 +269,9 @@
   "history.copy": "Copy",
   "history.copied": "Copied to clipboard",
   "history.copyFailed": "Copy failed",
+  "history.openFolder": "在文件夹中显示",
+  "history.openFolderFailed": "无法打开录音文件夹",
+  "history.openFolderNoAudio": "没有可用的存档音频",
   "history.delete": "Delete",
   "history.deleteFailed": "Delete failed",
   "history.confirmDelete": "Delete this recording?",

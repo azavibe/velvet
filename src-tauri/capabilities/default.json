@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicegui-org/nicegui-tauri-demo/main/src-tauri/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default permissions for Aral",
+  "description": "Default permissions for Agenda",
   "windows": ["main", "settings", "conversation"],
   "permissions": [
     "core:default",

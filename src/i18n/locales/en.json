@@ -1,5 +1,5 @@
 {
-  "settings.title": "Aral Preferences",
+  "settings.title": "Agenda Preferences",
   "settings.loading": "Loading settings...",
 
   "nav.general": "General",
@@ -36,6 +36,9 @@
   "history.copy": "Copy",
   "history.copied": "Copied to clipboard",
   "history.copyFailed": "Copy failed",
+  "history.openFolder": "Open in folder",
+  "history.openFolderFailed": "Could not open the recordings folder",
+  "history.openFolderNoAudio": "No archived audio is available",
   "history.delete": "Delete",
   "history.deleteFailed": "Delete failed",
   "history.confirmDelete": "Delete this recording?",
@@ -100,7 +103,7 @@
   "general.mic.default": "(Default)",
   "general.behavior.title": "Behavior",
   "general.behavior.launchStartup": "Launch at startup",
-  "general.behavior.launchStartupDesc": "Start Aral when you log in to Windows",
+  "general.behavior.launchStartupDesc": "Start Agenda when you log in to Windows",
   "general.behavior.autoPaste": "Auto-paste to clipboard",
   "general.behavior.autoPasteDesc": "Copy transcribed text to clipboard and paste into the active window",
   "general.behavior.soundEffects": "Sound effects",
@@ -191,7 +194,7 @@
 
   "agent.name.title": "Agent Name",
   "agent.name.description": "When you say this name during dictation, the AI switches from transcription cleanup to conversational response mode — it will answer questions and follow instructions instead of just cleaning up your speech.",
-  "agent.name.placeholder": "Aral",
+  "agent.name.placeholder": "Agenda",
   "agent.commands.title": "Voice Commands",
   "agent.commands.description": "Say one of these on its own during dictation and the app acts on it instead of typing it out. Anything else addressed to the agent is answered as a question.",
   "agent.commands.notes.phrase": "start notes",
@@ -217,7 +220,7 @@
   "developer.data.historyCleared": "History cleared",
   "developer.data.clearFailed": "Failed to clear history",
 
-  "about.title": "Aral",
+  "about.title": "Agenda",
   "about.description": "Desktop dictation with cloud and local transcription. Built with Tauri and React.",
   "about.updates.title": "Updates",
   "about.updates.description": "Check for new versions",
@@ -261,7 +264,7 @@
   "overlay.menu.quit": "Quit",
   "overlay.conversation.title": "Conversation",
   "overlay.conversation.listening": "Listening…",
-  "overlay.notification.title": "Aral",
+  "overlay.notification.title": "Agenda",
   "overlay.live.connecting": "Connecting…",
   "overlay.live.streaming": "Listening…",
   "overlay.live.polishing": "Polishing…",
@@ -341,7 +344,7 @@
   "micWarning": {
     "noDevice": {
       "title": "No microphone detected",
-      "body": "Aral couldn't find a microphone, so recording can't start. Connect a microphone and make sure it's enabled in your system sound settings, then try again."
+      "body": "Agenda couldn't find a microphone, so recording can't start. Connect a microphone and make sure it's enabled in your system sound settings, then try again."
     },
     "selectedMissing": {
       "title": "Microphone unavailable",

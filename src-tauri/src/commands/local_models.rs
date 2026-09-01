@@ -128,6 +128,42 @@ fn remove_active(state: &LocalModelDownloadState, model_id: &str) {
     state.active.lock().unwrap().remove(model_id);
 }
 
+async fn verify_and_install_partial(
+    app: &AppHandle,
+    model_id: &str,
+    model: &CatalogModel,
+    partial_path: &Path,
+    final_path: &Path,
+    marker_path: &Path,
+) -> Result<(), String> {
+    let verify_path = partial_path.to_path_buf();
+    let digest = tauri::async_runtime::spawn_blocking(move || hash_file(&verify_path))
+        .await
+        .map_err(|_| "local_model_verify_failed".to_string())??;
+    if digest != model.sha256 {
+        let _ = tokio::fs::remove_file(partial_path).await;
+        return Err("local_model_checksum_mismatch".to_string());
+    }
+
+    let _ = tokio::fs::remove_file(final_path).await;
+    tokio::fs::rename(partial_path, final_path)
+        .await
+        .map_err(|_| "local_model_install_failed".to_string())?;
+    tokio::fs::write(marker_path, model.sha256)
+        .await
+        .map_err(|_| "local_model_install_failed".to_string())?;
+    let _ = app.emit(
+        "local-model-download-progress",
+        DownloadProgress {
+            model_id: model_id.to_string(),
+            downloaded_bytes: model.size_bytes,
+            total_bytes: model.size_bytes,
+            status: "installed",
+        },
+    );
+    Ok(())
+}
+
 #[tauri::command]
 pub fn list_local_models(
     app: AppHandle,
@@ -185,6 +221,22 @@ pub async fn download_local_model(
             let _ = tokio::fs::remove_file(&partial_path).await;
             downloaded = 0;
         }
+
+        // A previous run may have received every byte but closed before the
+        // checksum/rename step. Asking for `bytes={size}-` then produces HTTP
+        // 416 even though the download shown in the UI is already at 100%.
+        if downloaded == model.size_bytes {
+            return verify_and_install_partial(
+                &app,
+                &model_id,
+                &model,
+                &partial_path,
+                &final_path,
+                &marker_path,
+            )
+            .await;
+        }
+
         let required = model.size_bytes.saturating_sub(downloaded);
         let available = fs2::available_space(&root).str_err()?;
         if available < required.saturating_add(50 * 1024 * 1024) {
@@ -196,7 +248,7 @@ pub async fn download_local_model(
             model.filename
         );
         let client = reqwest::Client::builder()
-            .user_agent("Aral local model downloader")
+            .user_agent("Agenda local model downloader")
             .connect_timeout(std::time::Duration::from_secs(20))
             .build()
             .map_err(|_| "local_model_download_client".to_string())?;
@@ -258,31 +310,15 @@ pub async fn download_local_model(
             return Err("local_model_download_truncated".to_string());
         }
 
-        let verify_path = partial_path.clone();
-        let digest = tauri::async_runtime::spawn_blocking(move || hash_file(&verify_path))
-            .await
-            .map_err(|_| "local_model_verify_failed".to_string())??;
-        if digest != model.sha256 {
-            let _ = tokio::fs::remove_file(&partial_path).await;
-            return Err("local_model_checksum_mismatch".to_string());
-        }
-        let _ = tokio::fs::remove_file(&final_path).await;
-        tokio::fs::rename(&partial_path, &final_path)
-            .await
-            .map_err(|_| "local_model_install_failed".to_string())?;
-        tokio::fs::write(&marker_path, model.sha256)
-            .await
-            .map_err(|_| "local_model_install_failed".to_string())?;
-        let _ = app.emit(
-            "local-model-download-progress",
-            DownloadProgress {
-                model_id: model_id.clone(),
-                downloaded_bytes: model.size_bytes,
-                total_bytes: model.size_bytes,
-                status: "installed",
-            },
-        );
-        Ok(())
+        verify_and_install_partial(
+            &app,
+            &model_id,
+            &model,
+            &partial_path,
+            &final_path,
+            &marker_path,
+        )
+        .await
     }
     .await;
     remove_active(&state, &model_id);

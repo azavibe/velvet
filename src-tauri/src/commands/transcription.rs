@@ -235,7 +235,7 @@ pub async fn transcribe_cloud(
     // Never log any part of the API key — even a 4-char prefix/suffix can leak
     // into shipped logs or bug reports. Log only whether a key is present.
     log::info!(
-        "[Whisperi] Transcribing: provider={}, model={}, has_key={}",
+        "[Agenda] Transcribing: provider={}, model={}, has_key={}",
         provider,
         model,
         !api_key.is_empty()
@@ -309,7 +309,7 @@ pub async fn transcribe_cloud(
     let stripped = if transcription::hallucination::is_known_hallucination(&stripped)
         || transcription::hallucination::is_non_speech_marker(&stripped)
     {
-        log::info!("[Whisperi] Dropped known hallucination phrase output");
+        log::info!("[Agenda] Dropped known hallucination phrase output");
         String::new()
     } else {
         stripped

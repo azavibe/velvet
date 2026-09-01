@@ -1,5 +1,5 @@
 {
-  "settings.title": "Aral 設定",
+  "settings.title": "Agenda 設定",
   "settings.loading": "設定を読み込み中...",
 
   "nav.general": "一般",
@@ -44,7 +44,7 @@
   "general.mic.default": "（デフォルト）",
   "general.behavior.title": "動作",
   "general.behavior.launchStartup": "スタートアップ時に起動",
-  "general.behavior.launchStartupDesc": "Windows ログイン時に Aral を起動する",
+  "general.behavior.launchStartupDesc": "Windows ログイン時に Agenda を起動する",
   "general.behavior.autoPaste": "クリップボードに自動貼り付け",
   "general.behavior.autoPasteDesc": "文字起こしテキストをクリップボードにコピーしてアクティブウィンドウに貼り付ける",
   "general.behavior.soundEffects": "効果音",
@@ -135,7 +135,7 @@
 
   "agent.name.title": "エージェント名",
   "agent.name.description": "音声入力中にこの名前を言うと、AI は文字起こしクリーンアップモードから会話応答モードに切り替わり、質問に答えたり指示に従ったりします。",
-  "agent.name.placeholder": "Aral",
+  "agent.name.placeholder": "Agenda",
   "agent.aliases.title": "エイリアス（任意）",
   "agent.aliases.description": "エージェント名の代替スペルまたは音訳。音声認識が非英語名を誤認識する場合に便利です。最大2つ。",
   "agent.aliases.placeholder1": "例: ウィスペリ",
@@ -151,7 +151,7 @@
   "developer.data.historyCleared": "履歴を削除しました",
   "developer.data.clearFailed": "履歴の削除に失敗しました",
 
-  "about.title": "Aral",
+  "about.title": "Agenda",
   "about.description": "クラウドとローカルの文字起こしに対応したデスクトップ音声入力。Tauri と React で構築。",
   "about.updates.title": "アップデート",
   "about.updates.description": "新しいバージョンを確認",
@@ -186,7 +186,7 @@
   "overlay.menu.settings": "設定",
   "overlay.menu.cancel": "録音をキャンセル",
   "overlay.menu.quit": "終了",
-  "overlay.notification.title": "Aral",
+  "overlay.notification.title": "Agenda",
   "overlay.live.connecting": "接続中…",
   "overlay.live.streaming": "入力中…",
   "overlay.live.polishing": "改善中…",
@@ -253,7 +253,7 @@
   "micWarning": {
     "noDevice": {
       "title": "マイクが検出されません",
-      "body": "Aral がマイクを見つけられなかったため、録音を開始できません。マイクを接続し、システムのサウンド設定で有効になっていることを確認してから、もう一度お試しください。"
+      "body": "Agenda がマイクを見つけられなかったため、録音を開始できません。マイクを接続し、システムのサウンド設定で有効になっていることを確認してから、もう一度お試しください。"
     },
     "selectedMissing": {
       "title": "マイクを使用できません",
@@ -269,6 +269,9 @@
   "history.copy": "Copy",
   "history.copied": "Copied to clipboard",
   "history.copyFailed": "Copy failed",
+  "history.openFolder": "フォルダーで表示",
+  "history.openFolderFailed": "録音フォルダーを開けませんでした",
+  "history.openFolderNoAudio": "アーカイブされた音声はありません",
   "history.delete": "Delete",
   "history.deleteFailed": "Delete failed",
   "history.confirmDelete": "Delete this recording?",

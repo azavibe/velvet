@@ -44,7 +44,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: 'Aral ${{ github.ref_name }}'
+          releaseName: 'Agenda ${{ github.ref_name }}'
           releaseBody: 'See [CHANGELOG](https://github.com/azavibe/agenda/blob/main/docs/CHANGELOG.md) for details.'
           releaseDraft: false
           prerelease: false

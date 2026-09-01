@@ -65,7 +65,7 @@ export default function MicWarningModal() {
     kind === "no-device"
       ? t("micWarning.noDevice.body", {
           defaultValue:
-            "Aral couldn't find a microphone, so recording can't start. Connect a microphone and make sure it's enabled in your system sound settings, then try again.",
+            "Agenda couldn't find a microphone, so recording can't start. Connect a microphone and make sure it's enabled in your system sound settings, then try again.",
         })
       : t("micWarning.selectedMissing.body", {
           device,

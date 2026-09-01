@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicegui-org/nicegui-tauri-demo/main/src-tauri/schemas/desktop-schema.json",
-  "productName": "Aral",
+  "productName": "Agenda",
   "version": "0.11.0",
   "identifier": "com.whisperi.app",
   "build": {
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Aral",
+        "title": "Agenda",
         "width": 100,
         "height": 100,
         "resizable": false,
@@ -26,9 +26,9 @@
       },
       {
         "label": "settings",
-        "title": "Aral Settings",
+        "title": "Agenda Settings",
         "url": "/",
-        "width": 760,
+        "width": 800,
         "height": 800,
         "resizable": true,
         "decorations": false,
@@ -37,7 +37,7 @@
       },
       {
         "label": "conversation",
-        "title": "Aral — Conversation",
+        "title": "Agenda — Conversation",
         "url": "/",
         "width": 380,
         "height": 560,

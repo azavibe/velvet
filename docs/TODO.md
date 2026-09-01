@@ -63,8 +63,8 @@ Detailed [implementation plan](plans/conversational-assistant.md).
     - [ ] Verify the clipped recording smoke is centered on the microphone circle and remains centered while dragging the overlay.
     - [ ] Verify processing uses the compact horizontal pulse without spinning/orbiting layers and stops all motion when idle or reduced motion is enabled.
 - [ ] Rebrand the application from Whisperi to Agenda without losing existing user data or installer continuity.
-  - [ ] Audit visible branding, package metadata, installer names, window titles, tray text, locales, documentation, and logs.
-  - [ ] Preserve or migrate legacy database, recordings, settings, API keys, updater identity, and application-data paths.
+  - [x] Audit visible runtime branding, product metadata, installer names, window titles, tray text, locales, and logs.
+  - [x] Preserve legacy database, recordings, settings, API keys, updater identity, and application-data paths while migrating historical default agent names.
   - [ ] Preserve the original MIT license and upstream attribution.
   - [ ] Verify upgrade installation from v0.8.8 and first-run migration on Windows.
 

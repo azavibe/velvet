@@ -260,7 +260,7 @@ pub fn run() {
 
             TrayIconBuilder::with_id(tray::TRAY_ID)
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("Aral")
+                .tooltip("Agenda")
                 .menu(&menu)
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "show" => {
@@ -367,7 +367,7 @@ pub fn run() {
             commands::notes::cleanup_note,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building whisperi")
+        .expect("error while building Agenda")
         .run(|app_handle, event| {
             // On quit (tray "Quit", the quit_app command, or any exit request),
             // flush an active Live session before the process exits: signal

@@ -71,16 +71,13 @@ pub async fn save_transcription(
             Ok(Err(error)) => {
                 db2.mark_audio_asset_failed(asset_id, error.code())
                     .str_err()?;
-                log::warn!(
-                    "[Whisperi] Dictation audio archive failed: {}",
-                    error.code()
-                );
+                log::warn!("[Agenda] Dictation audio archive failed: {}", error.code());
             }
             Err(_) => {
                 db2.mark_audio_asset_failed(asset_id, ArchiveFailure::Interrupted.code())
                     .str_err()?;
                 log::warn!(
-                    "[Whisperi] Dictation audio archive was interrupted: {}",
+                    "[Agenda] Dictation audio archive was interrupted: {}",
                     ArchiveFailure::Interrupted.code()
                 );
             }

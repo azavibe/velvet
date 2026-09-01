@@ -53,7 +53,7 @@ function DictationOverlayInner() {
 
   const { settings, loaded } = useSettings();
 
-  // Spoken app commands ("Aral, start notes"). Recognized here because the
+  // Spoken app commands ("Agenda, start notes"). Recognized here because the
   // overlay owns dictation, but deliberately *executed* by asking the
   // Conversation window to do it — that window owns capture state, the
   // consent gate, and persona selection, so a voice-started conversation

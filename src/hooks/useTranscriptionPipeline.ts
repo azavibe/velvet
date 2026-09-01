@@ -209,7 +209,7 @@ export async function transcribe(
       throw new Error(`No API key configured for ${provider}. Set it in Settings.`);
     }
     const model = settings.cloudModel ?? "gpt-4o-mini-transcribe";
-    console.log(`[Whisperi] Transcribing with ${provider}/${model}...`);
+    console.log(`[Agenda] Transcribing with ${provider}/${model}...`);
     const result = await transcribeCloud(
       audioData,
       provider,
@@ -223,7 +223,7 @@ export async function transcribe(
     return { text: result.text, detectedLanguage: result.detected_language, engine: "cloud" };
   } catch (cloudError) {
     if (settings.localFallbackEnabled && settings.localModel) {
-      console.warn("[Whisperi] Cloud transcription failed; using local fallback.", cloudError);
+      console.warn("[Agenda] Cloud transcription failed; using local fallback.", cloudError);
       return runLocal("fallback:local");
     }
     throw cloudError;
@@ -355,13 +355,13 @@ export async function enhance(
   const rApiKey = await getApiKey(settings.reasoningProvider);
   if (!rApiKey) {
     console.warn(
-      `[Whisperi] No API key for enhancement provider: ${settings.reasoningProvider}`,
+      `[Agenda] No API key for enhancement provider: ${settings.reasoningProvider}`,
     );
     return { finalText: rawText, rawAiResponse: null };
   }
 
   console.log(
-    `[Whisperi] Enhancing with ${settings.reasoningProvider}/${settings.reasoningModel}...`,
+    `[Agenda] Enhancing with ${settings.reasoningProvider}/${settings.reasoningModel}...`,
   );
   const isChatMode = detectChatMode(
     rawText,
@@ -411,12 +411,12 @@ export async function enhance(
   const maxRatio = LENGTH_GUARD_MAP[intensity];
   if (!isChatMode && finalText.length > rawText.length * maxRatio) {
     console.warn(
-      `[Whisperi] Enhancement output is >${maxRatio}x input length — model likely answered instead of cleaning. Falling back to raw text.`,
+      `[Agenda] Enhancement output is >${maxRatio}x input length — model likely answered instead of cleaning. Falling back to raw text.`,
     );
     finalText = rawText;
   }
 
-  console.log("[Whisperi] Enhanced:", finalText);
+  console.log("[Agenda] Enhanced:", finalText);
   return { finalText, rawAiResponse };
 }
 

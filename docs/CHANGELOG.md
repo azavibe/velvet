@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Highlights
+
+- Completed local model downloads now install cleanly instead of failing with HTTP 416.
+- History can reveal each archived recording directly in its folder.
+- The visible application name is now Agenda throughout the interface and installer.
+
+### Fixes
+
+- A complete resumable model file is now checksum-verified and installed before any unnecessary range request is sent.
+- The Settings window is wider so local model download controls remain visible.
+
+### Changes
+
+- Added an Open in folder action beside Copy and Delete on expanded History entries.
+- Migrated the historical default agent names Whisperi and Aral to Agenda while preserving custom names and existing application data paths.
+
 ## [0.11.0] - 2026-09-02
 
 ### Highlights

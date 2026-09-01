@@ -192,7 +192,7 @@ export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecording
         throw e;
       }
       if (import.meta.env.DEV || settings.debugMode) {
-        console.debug("[Whisperi] transcription received", {
+        console.debug("[Agenda] transcription received", {
           characters: providerText.length,
           detectedLanguage: detectedLanguage ?? null,
         });
@@ -208,7 +208,7 @@ export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecording
           durationMs,
           audioData,
         );
-        console.log("[Whisperi] Empty transcription archived for retry.");
+        console.log("[Agenda] Empty transcription archived for retry.");
         if (transcriptionEngine !== "cloud") {
           throw new Error(
             "The local model did not recognize any speech. The recording was saved in History.",
@@ -224,7 +224,7 @@ export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecording
         detectedLanguage,
       );
       if (import.meta.env.DEV || settings.debugMode) {
-        console.debug("[Whisperi] contextual reconciliation", {
+        console.debug("[Agenda] contextual reconciliation", {
           status: reconciliation.status,
           confidence: reconciliation.confidence,
           evidence: reconciliation.evidence,
@@ -239,13 +239,13 @@ export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecording
       );
       const agentEchoRemoved = commandText !== reconciledText;
       if (agentEchoRemoved && (import.meta.env.DEV || settings.debugMode)) {
-        console.debug("[Whisperi] code=agent_wake_echo_removed", {
+        console.debug("[Agenda] code=agent_wake_echo_removed", {
           beforeCharacters: reconciledText.length,
           afterCharacters: commandText.length,
         });
       }
 
-      // "Aral, start notes" is an instruction to the app, not text to type.
+      // "Agenda, start notes" is an instruction to the app, not text to type.
       // Detect against provider-normalized text before arbitrary user
       // dictionary replacements. Command-scoped ASR tolerance belongs in the
       // recognizer; a custom nodes→notes rule must not gain permission to
@@ -281,7 +281,7 @@ export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecording
         finalText = result.finalText;
         rawAiResponse = result.rawAiResponse;
       } catch (e) {
-        console.error("[Whisperi] Enhancement error:", e);
+        console.error("[Agenda] Enhancement error:", e);
         if (settings.debugMode) {
           finalText = `${correctedText}\n\n[Enhancement Error]\n${e}`;
         }
@@ -337,12 +337,12 @@ export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecording
       // Backend gate for silent/too-short clips (AudioError::NoSpeech) — an
       // accidental tap or silence hold must reset quietly, not raise a toast.
       if (String(e).includes("No speech detected")) {
-        console.log("[Whisperi] No speech detected, skipping.");
+        console.log("[Agenda] No speech detected, skipping.");
         setAudioLevel(0);
         setPhase("idle");
         return;
       }
-      console.error("[Whisperi] Transcription failed:", e);
+      console.error("[Agenda] Transcription failed:", e);
       onToast?.({
         title: "Transcription Failed",
         description: String(e),

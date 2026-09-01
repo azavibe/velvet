@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "whisperi",
+      "name": "agenda",
       "dependencies": {
         "@radix-ui/react-slot": "^1.1.2",
         "@radix-ui/react-toggle": "^1.1.2",
