@@ -387,8 +387,9 @@ pub fn stop_note_capture(
     app: AppHandle,
     note_state: State<'_, Arc<NoteCaptureState>>,
 ) -> Result<(), String> {
-    NoteCapture::stop(&**note_state).str_err()?;
+    let stop_result = NoteCapture::stop(&**note_state).str_err();
     tray::stop_recording(&app, RecordingSource::Note, None);
+    stop_result?;
     let recordings_root = recordings_dir(&app).str_err()?;
     let db = app.state::<Database>();
     let archive = app.state::<NoteAudioArchive>();
@@ -418,9 +419,14 @@ pub fn is_note_capture_paused(
 
 #[tauri::command]
 pub fn get_note_capture_error(
+    app: AppHandle,
     note_state: State<'_, Arc<NoteCaptureState>>,
 ) -> Result<Option<String>, String> {
-    Ok(note_state.get_error())
+    let error = note_state.get_error();
+    if error.is_some() && !note_state.is_active() {
+        tray::stop_recording(&app, RecordingSource::Note, None);
+    }
+    Ok(error)
 }
 
 #[tauri::command]

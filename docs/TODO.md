@@ -7,8 +7,9 @@ Detailed [implementation plan](plans/conversational-assistant.md).
 ### v0.8.10 — Recording visibility and release correction
 
 - [ ] Show recording state in the system tray when the floating bubble is hidden.
-  - [x] Switch the shared tray icon to magenta for Standard, Live, Conversation, and Notes capture without changing the bubble animation.
+  - [x] Switch the shared tray icon to violet for Standard, Live, Conversation, and Notes capture.
   - [x] Restore the idle icon on stop, failure, or note pause, with stale-session protection for rapid recording restarts.
+  - [x] Move tray mutations to the Windows UI thread, clear ownership before propagating stop errors, and use a visible violet recording tint and tooltip.
   - [ ] Verify all capture modes, note pause/resume, hidden-bubble recording, and rapid stop/start behavior in the packaged Windows tray.
 - [ ] Remove repeated configured-agent wake-word echoes without breaking fuzzy voice commands or legitimate interior mentions.
   - [x] Sanitize repeated configured-name and alias echoes at utterance boundaries before command routing, enhancement, paste, and Live typing while preserving raw History text.
@@ -56,8 +57,9 @@ Detailed [implementation plan](plans/conversational-assistant.md).
     - [ ] Confirm each consumed command opens/focuses the intended mode/persona, starts or requests the intended capture, and is not pasted or saved as ordinary dictation.
 - [ ] Reduce the floating agent icon by 30%, remove its white stroke, and add lightweight active-state animation.
   - [x] Reduce the visible circle to 32px inside a 44px target, remove the border, and add recording/processing/error phases with reduced-motion CSS.
+  - [x] Add distinct violet phase colors and a speech-responsive 36px thin translucent wave without enlarging the 32px bubble.
   - [ ] Complete Windows visual, CPU, and RAM verification for idle, recording, processing, and error states.
-    - [ ] Verify light and dark backgrounds show exactly one 32px visible circle and no border, stroke, or transparent 44px ring.
+    - [ ] Verify light and dark backgrounds show exactly one 32px visible circle plus one thin 36px translucent recording wave, with no large ring.
     - [ ] Verify the clipped recording smoke is centered on the microphone circle and remains centered while dragging the overlay.
     - [ ] Verify processing uses the compact horizontal pulse without spinning/orbiting layers and stops all motion when idle or reduced motion is enabled.
 - [ ] Rebrand the application from Whisperi to Agenda without losing existing user data or installer continuity.

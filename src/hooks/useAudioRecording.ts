@@ -67,6 +67,8 @@ export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecording
   // stale under two rapid hotkey-release events (React commits state async),
   // which let one recording transcribe and paste twice.
   const stopInFlightRef = useRef(false);
+  const phaseRef = useRef<RecordingPhase>(phase);
+  phaseRef.current = phase;
   // Read through a ref so `stop`'s identity doesn't change with the caller's
   // callback identity (same reasoning as useConversation's onToastRef).
   const onVoiceCommandRef = useRef(onVoiceCommand);
@@ -81,8 +83,13 @@ export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecording
         if (!cancelled) setAudioLevel(level);
       });
       const unlistenError = await onRecordingError((error) => {
-        if (!cancelled) {
+        if (!cancelled && phaseRef.current === "recording") {
           setPhase("idle");
+          recordingStartRef.current = null;
+          setAudioLevel(0);
+          // Native stop clears both the cpal owner and the tray indicator even
+          // when the audio thread itself raised the error.
+          void apiStopRecording().catch(() => {});
           onToast?.({
             title: "Recording Error",
             description: error,

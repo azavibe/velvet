@@ -11,7 +11,10 @@
   text layer, while uncertainty, timeout, or provider failure preserves raw ASR.
 - Direct conversation and text-to-speech are deferred. v0.10 memory can later
   add durable known entities, repeated evidence, contradiction, and inactivity.
-- Verification: 89 frontend tests, TypeScript check, 276 Rust unit tests, and 6
+- Tray updates are serialized onto the Windows UI thread and stop/error paths
+  always release their capture owner. The compact bubble now has distinct
+  violet phase colors and a thin speech-responsive outer wave.
+- Verification: 89 frontend tests, TypeScript check, 278 Rust unit tests, and 6
   streaming integration tests pass. Packaged Windows provider and History UI
   verification remains a manual release check.
 

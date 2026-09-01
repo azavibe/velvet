@@ -108,7 +108,7 @@ function DictationOverlayInner() {
     });
   }, [notifyError, t]);
 
-  const { phase, isRecording, isProcessing, start, stop, toggle, cancel } =
+  const { phase, isRecording, isProcessing, audioLevel, start, stop, toggle, cancel } =
     useDictation({ onToast: notifyError, onVoiceCommand: handleVoiceCommand });
 
   // Lightweight instance — no transcript/suggestion state, autoTrigger off
@@ -294,8 +294,13 @@ function DictationOverlayInner() {
     <>
       <style>{`
         @keyframes overlay-listening-smoke {
-          0%, 100% { transform: scale(0.88); opacity: 0.42; }
-          50% { transform: scale(1.08); opacity: 0.78; }
+          0%, 100% { transform: scale(0.92); opacity: 0.42; background-position: 20% 50%; }
+          50% { transform: scale(1.06); opacity: 0.72; background-position: 80% 50%; }
+        }
+        @keyframes overlay-listening-wave {
+          0% { transform: scale(0.96); opacity: 0.38; }
+          55% { transform: scale(1.03); opacity: 0.82; }
+          100% { transform: scale(1.08); opacity: 0.12; }
         }
         @keyframes overlay-processing-pulse {
           0%, 100% { transform: translateY(0) scaleY(0.84); opacity: 0.62; }
@@ -305,24 +310,39 @@ function DictationOverlayInner() {
           transform-origin: 50% 50%;
           isolation: isolate;
         }
+        .overlay-idle-surface {
+          background: linear-gradient(145deg, #8b5cf6 0%, #6d28d9 100%);
+          box-shadow: 0 3px 10px rgba(76, 29, 149, 0.42);
+        }
+        .overlay-recording-surface {
+          background: radial-gradient(circle at 36% 30%, #d8b4fe 0%, #a855f7 38%, #7e22ce 100%);
+          box-shadow: 0 3px 12px rgba(147, 51, 234, 0.58);
+        }
+        .overlay-listening-wave-shell {
+          width: 36px;
+          height: 36px;
+          transform: scale(calc(1 + var(--overlay-level, 0) * 0.045));
+          transition: transform 80ms linear;
+        }
+        .overlay-listening-wave {
+          border: 1px solid rgba(216, 180, 254, 0.76);
+          box-shadow: 0 0 4px rgba(168, 85, 247, 0.35);
+          animation: overlay-listening-wave 1.15s ease-out infinite;
+        }
         .overlay-listening-smoke {
-          background: radial-gradient(
-            circle at 50% 50%,
-            rgba(210, 60, 255, 0.95) 0%,
-            rgba(114, 92, 255, 0.82) 48%,
-            rgba(40, 183, 255, 0.68) 74%,
-            rgba(210, 60, 255, 0.36) 100%
-          );
+          background: linear-gradient(120deg, rgba(240, 171, 252, 0.74), rgba(147, 51, 234, 0.34), rgba(196, 181, 253, 0.7));
+          background-size: 180% 180%;
           transform-origin: 50% 50%;
-          animation: overlay-listening-smoke 1.6s ease-in-out infinite;
+          animation: overlay-listening-smoke 1.35s ease-in-out infinite;
         }
         .overlay-processing-surface {
           background: radial-gradient(
-            circle at 50% 50%,
-            #d23cff 0%,
-            #725cff 58%,
-            #28b7ff 100%
+            circle at 38% 32%,
+            #e9d5ff 0%,
+            #9333ea 52%,
+            #581c87 100%
           );
+          box-shadow: 0 3px 12px rgba(126, 34, 206, 0.5);
         }
         .overlay-processing-dots > div {
           animation: overlay-processing-pulse 0.9s ease-in-out infinite;
@@ -335,6 +355,7 @@ function DictationOverlayInner() {
         }
         @media (prefers-reduced-motion: reduce) {
           .overlay-listening-smoke,
+          .overlay-listening-wave,
           .overlay-processing-dots > div {
             animation: none !important;
           }
@@ -368,6 +389,16 @@ function DictationOverlayInner() {
                     : t("overlay.startRecording")
             }
           >
+            {motionMode === "listening" && (
+              <span
+                data-overlay-outer-stroke="36px"
+                className="overlay-listening-wave-shell pointer-events-none absolute flex items-center justify-center rounded-full"
+                style={{ "--overlay-level": Math.min(1, audioLevel * 4) } as React.CSSProperties}
+                aria-hidden="true"
+              >
+                <span className="overlay-listening-wave absolute inset-0 rounded-full" />
+              </span>
+            )}
             <span
               data-overlay-visible-circle="32px"
               className={`overlay-visible-circle relative flex w-8 h-8 shrink-0 items-center justify-center overflow-hidden rounded-full border-0 shadow-md group-focus-visible:ring-2 group-focus-visible:ring-inset group-focus-visible:ring-ring ${
@@ -376,8 +407,8 @@ function DictationOverlayInner() {
                   : isProcessing
                     ? "overlay-processing-surface text-foreground-bright"
                     : isRecording
-                      ? "bg-[#725cff] text-white"
-                      : "bg-primary text-foreground-bright"
+                      ? "overlay-recording-surface text-white"
+                      : "overlay-idle-surface text-foreground-bright"
               }`}
             >
               {motionMode === "listening" && (
