@@ -1,6 +1,8 @@
 use super::{ResultExt, recordings_dir};
 use crate::audio::archive::{self, ArchiveFailure};
-use crate::database::{Database, StatsPayload, StatsPeriod, Transcription};
+use crate::database::{
+    Database, MemoryCandidate, MemoryContextItem, StatsPayload, StatsPeriod, Transcription,
+};
 use tauri::{AppHandle, Manager, State};
 
 #[tauri::command]
@@ -123,4 +125,29 @@ pub fn get_stats(db: State<'_, Database>, period: String) -> Result<StatsPayload
         other => return Err(format!("unknown stats period: {other}")),
     };
     db.get_stats(p).str_err()
+}
+
+#[tauri::command]
+pub fn store_memory_candidates(
+    db: State<'_, Database>,
+    source_type: String,
+    source_id: i64,
+    candidates: Vec<MemoryCandidate>,
+) -> Result<u32, String> {
+    db.store_memory_candidates(&source_type, source_id, &candidates)
+        .str_err()
+}
+
+#[tauri::command]
+pub fn get_memory_context(
+    db: State<'_, Database>,
+    query: String,
+    limit: u32,
+) -> Result<Vec<MemoryContextItem>, String> {
+    db.get_memory_context(&query, limit).str_err()
+}
+
+#[tauri::command]
+pub fn reset_memory(db: State<'_, Database>) -> Result<(), String> {
+    db.reset_memory().str_err()
 }

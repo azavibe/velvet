@@ -243,6 +243,46 @@ export async function getTranscriptions(
   return invoke("get_transcriptions", { limit, offset });
 }
 
+export type MemoryKind = "entity" | "fact" | "relationship" | "summary";
+
+export interface MemoryCandidate {
+  kind: MemoryKind;
+  canonical_text: string;
+  subject: string | null;
+  predicate: string | null;
+  object: string | null;
+  aliases: string[];
+  confidence: number;
+}
+
+export interface MemoryContextItem {
+  id: number;
+  kind: MemoryKind;
+  canonical_text: string;
+  aliases: string[];
+  confidence: number;
+  support_count: number;
+}
+
+export async function storeMemoryCandidates(
+  sourceType: "dictation" | "conversation" | "note",
+  sourceId: number,
+  candidates: MemoryCandidate[],
+): Promise<number> {
+  return invoke("store_memory_candidates", { sourceType, sourceId, candidates });
+}
+
+export async function getMemoryContext(
+  query: string,
+  limit = 12,
+): Promise<MemoryContextItem[]> {
+  return invoke("get_memory_context", { query, limit });
+}
+
+export async function resetMemory(): Promise<void> {
+  return invoke("reset_memory");
+}
+
 export async function deleteTranscription(id: number): Promise<void> {
   return invoke("delete_transcription", { id });
 }

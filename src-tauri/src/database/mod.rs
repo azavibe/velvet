@@ -84,6 +84,28 @@ pub struct Transcription {
     pub audio_asset: Option<AudioAsset>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct MemoryCandidate {
+    pub kind: String,
+    pub canonical_text: String,
+    pub subject: Option<String>,
+    pub predicate: Option<String>,
+    pub object: Option<String>,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    pub confidence: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemoryContextItem {
+    pub id: i64,
+    pub kind: String,
+    pub canonical_text: String,
+    pub aliases: Vec<String>,
+    pub confidence: f64,
+    pub support_count: i64,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum StatsPeriod {
     Today,
@@ -827,6 +849,311 @@ impl Database {
         Ok(transcriptions)
     }
 
+    pub fn store_memory_candidates(
+        &self,
+        source_type: &str,
+        source_id: i64,
+        candidates: &[MemoryCandidate],
+    ) -> Result<u32> {
+        anyhow::ensure!(
+            matches!(source_type, "dictation" | "conversation" | "note"),
+            "invalid memory source type"
+        );
+        anyhow::ensure!(source_id > 0, "invalid memory source id");
+        anyhow::ensure!(candidates.len() <= 20, "too many memory candidates");
+
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let source_exists: bool = match source_type {
+            "dictation" => tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM transcriptions WHERE id = ?1)",
+                [source_id],
+                |row| row.get(0),
+            )?,
+            "conversation" => tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?1)",
+                [source_id],
+                |row| row.get(0),
+            )?,
+            "note" => tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM notes WHERE id = ?1)",
+                [source_id],
+                |row| row.get(0),
+            )?,
+            _ => false,
+        };
+        anyhow::ensure!(source_exists, "memory source no longer exists");
+        let mut stored = 0_u32;
+        for candidate in candidates {
+            let kind = candidate.kind.trim();
+            let canonical = candidate.canonical_text.trim();
+            if !matches!(kind, "entity" | "fact" | "relationship" | "summary")
+                || canonical.is_empty()
+                || canonical.chars().count() > 500
+                || !candidate.confidence.is_finite()
+                || !(0.6..=1.0).contains(&candidate.confidence)
+            {
+                continue;
+            }
+            let subject = candidate
+                .subject
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty());
+            let predicate = candidate
+                .predicate
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty());
+            let object = candidate
+                .object
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty());
+
+            if matches!(kind, "fact" | "relationship")
+                && candidate.confidence >= 0.8
+                && let (Some(subject), Some(predicate), Some(object)) = (subject, predicate, object)
+            {
+                tx.execute(
+                    "UPDATE memory_items
+                     SET state = 'contradicted', updated_at = CURRENT_TIMESTAMP
+                     WHERE kind IN ('fact', 'relationship')
+                       AND lower(subject) = lower(?1)
+                       AND lower(predicate) = lower(?2)
+                       AND lower(COALESCE(object, '')) <> lower(?3)
+                       AND lower(canonical_text) <> lower(?4)",
+                    rusqlite::params![subject, predicate, object, canonical],
+                )?;
+            }
+
+            let existing: Option<(i64, f64)> = tx
+                .query_row(
+                    "SELECT id, confidence FROM memory_items
+                     WHERE lower(canonical_text) = lower(?1)",
+                    [canonical],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            let (memory_id, previous_confidence) = match existing {
+                Some(value) => value,
+                None => {
+                    tx.execute(
+                        "INSERT INTO memory_items
+                         (kind, canonical_text, subject, predicate, object, confidence)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        rusqlite::params![
+                            kind,
+                            canonical,
+                            subject,
+                            predicate,
+                            object,
+                            candidate.confidence
+                        ],
+                    )?;
+                    (tx.last_insert_rowid(), candidate.confidence)
+                }
+            };
+
+            tx.execute(
+                "INSERT OR IGNORE INTO memory_sources (memory_id, source_type, source_id)
+                 VALUES (?1, ?2, ?3)",
+                rusqlite::params![memory_id, source_type, source_id],
+            )?;
+            let source_added = tx.changes() > 0;
+            for alias in candidate.aliases.iter().take(12) {
+                let alias = alias.trim();
+                if alias.is_empty() || alias.chars().count() > 120 {
+                    continue;
+                }
+                tx.execute(
+                    "INSERT OR IGNORE INTO memory_aliases (memory_id, alias) VALUES (?1, ?2)",
+                    rusqlite::params![memory_id, alias],
+                )?;
+            }
+            let support_count: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM memory_sources WHERE memory_id = ?1",
+                [memory_id],
+                |row| row.get(0),
+            )?;
+            let confidence = if source_added && support_count > 1 {
+                1.0 - (1.0 - previous_confidence) * (1.0 - candidate.confidence * 0.5)
+            } else {
+                previous_confidence.max(candidate.confidence)
+            };
+            let has_conflict: bool = tx.query_row(
+                "SELECT EXISTS(
+                   SELECT 1 FROM memory_items other
+                   WHERE other.id <> ?1
+                     AND other.kind IN ('fact', 'relationship')
+                     AND lower(other.subject) = lower(?2)
+                     AND lower(other.predicate) = lower(?3)
+                     AND lower(COALESCE(other.object, '')) <> lower(COALESCE(?4, ''))
+                 )",
+                rusqlite::params![memory_id, subject, predicate, object],
+                |row| row.get(0),
+            )?;
+            let state = if has_conflict && matches!(kind, "fact" | "relationship") {
+                "contradicted"
+            } else if support_count >= 2 && confidence >= 0.85 {
+                "confirmed"
+            } else {
+                "provisional"
+            };
+            tx.execute(
+                "UPDATE memory_items
+                 SET confidence = ?2, support_count = ?3, state = ?4,
+                     updated_at = CURRENT_TIMESTAMP,
+                     last_supported_at = CASE WHEN ?5 THEN CURRENT_TIMESTAMP ELSE last_supported_at END
+                 WHERE id = ?1",
+                rusqlite::params![memory_id, confidence, support_count, state, source_added],
+            )?;
+            stored += 1;
+        }
+        tx.commit()?;
+        Ok(stored)
+    }
+
+    pub fn get_memory_context(&self, query: &str, limit: u32) -> Result<Vec<MemoryContextItem>> {
+        let conn = self.conn.lock().unwrap();
+        let bounded = limit.clamp(1, 12);
+        let mut stmt = conn.prepare(
+            "SELECT id, kind, canonical_text,
+                    confidence * CASE
+                      WHEN julianday('now') - julianday(last_supported_at) > 365 THEN 0.6
+                      WHEN julianday('now') - julianday(last_supported_at) > 180 THEN 0.8
+                      ELSE 1.0 END AS effective_confidence,
+                    support_count
+             FROM memory_items
+             WHERE state = 'confirmed'
+               AND confidence * CASE
+                     WHEN julianday('now') - julianday(last_supported_at) > 365 THEN 0.6
+                     WHEN julianday('now') - julianday(last_supported_at) > 180 THEN 0.8
+                     ELSE 1.0 END >= 0.8
+             ORDER BY
+               CASE
+                 WHEN lower(?1) LIKE '%' || lower(canonical_text) || '%' THEN 0
+                 WHEN EXISTS (
+                   SELECT 1 FROM memory_aliases a
+                   WHERE a.memory_id = memory_items.id
+                     AND lower(?1) LIKE '%' || lower(a.alias) || '%'
+                 ) THEN 1
+                 ELSE 2 END,
+               last_supported_at DESC
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![query, bounded], |row| {
+            Ok(MemoryContextItem {
+                id: row.get(0)?,
+                kind: row.get(1)?,
+                canonical_text: row.get(2)?,
+                confidence: row.get(3)?,
+                support_count: row.get(4)?,
+                aliases: Vec::new(),
+            })
+        })?;
+        let mut items = rows.collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+        for item in &mut items {
+            let mut alias_stmt = conn.prepare(
+                "SELECT alias FROM memory_aliases WHERE memory_id = ?1 ORDER BY id LIMIT 12",
+            )?;
+            item.aliases = alias_stmt
+                .query_map([item.id], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+        }
+        Ok(items)
+    }
+
+    pub fn reset_memory(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM memory_items", [])?;
+        Ok(())
+    }
+
+    fn detach_memory_source_conn(
+        conn: &Connection,
+        source_type: &str,
+        source_id: i64,
+    ) -> Result<()> {
+        let mut stmt = conn.prepare(
+            "SELECT memory_id FROM memory_sources WHERE source_type = ?1 AND source_id = ?2",
+        )?;
+        let ids = stmt
+            .query_map(rusqlite::params![source_type, source_id], |row| {
+                row.get::<_, i64>(0)
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        drop(stmt);
+        conn.execute(
+            "DELETE FROM memory_sources WHERE source_type = ?1 AND source_id = ?2",
+            rusqlite::params![source_type, source_id],
+        )?;
+        for memory_id in ids {
+            let support_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM memory_sources WHERE memory_id = ?1",
+                [memory_id],
+                |row| row.get(0),
+            )?;
+            if support_count == 0 {
+                conn.execute("DELETE FROM memory_items WHERE id = ?1", [memory_id])?;
+            } else {
+                conn.execute(
+                    "UPDATE memory_items
+                     SET support_count = ?2,
+                         state = CASE WHEN state = 'contradicted' THEN state
+                                      WHEN ?2 >= 2 AND confidence >= 0.85 THEN 'confirmed'
+                                      ELSE 'provisional' END,
+                         updated_at = CURRENT_TIMESTAMP
+                     WHERE id = ?1",
+                    rusqlite::params![memory_id, support_count],
+                )?;
+            }
+        }
+        Self::recompute_memory_states_conn(conn)?;
+        Ok(())
+    }
+
+    fn recompute_memory_states_conn(conn: &Connection) -> Result<()> {
+        conn.execute(
+            "UPDATE memory_items
+             SET state = CASE
+               WHEN kind IN ('fact', 'relationship') AND EXISTS (
+                 SELECT 1 FROM memory_items other
+                 WHERE other.id <> memory_items.id
+                   AND other.kind IN ('fact', 'relationship')
+                   AND lower(other.subject) = lower(memory_items.subject)
+                   AND lower(other.predicate) = lower(memory_items.predicate)
+                   AND lower(COALESCE(other.object, '')) <> lower(COALESCE(memory_items.object, ''))
+               ) THEN 'contradicted'
+               WHEN support_count >= 2 AND confidence >= 0.85 THEN 'confirmed'
+               ELSE 'provisional' END,
+             updated_at = CURRENT_TIMESTAMP",
+            [],
+        )?;
+        Ok(())
+    }
+
+    fn detach_all_memory_sources_conn(conn: &Connection, source_type: &str) -> Result<()> {
+        conn.execute(
+            "DELETE FROM memory_sources WHERE source_type = ?1",
+            [source_type],
+        )?;
+        conn.execute(
+            "DELETE FROM memory_items
+             WHERE NOT EXISTS (SELECT 1 FROM memory_sources WHERE memory_id = memory_items.id)",
+            [],
+        )?;
+        conn.execute(
+            "UPDATE memory_items
+             SET support_count = (SELECT COUNT(*) FROM memory_sources WHERE memory_id = memory_items.id),
+                 updated_at = CURRENT_TIMESTAMP",
+            [],
+        )?;
+        Self::recompute_memory_states_conn(conn)?;
+        Ok(())
+    }
+
     /// Compatibility-only setter for legacy callers. New archive code uses
     /// `mark_audio_asset_ready`, which updates the state and this column
     /// together.
@@ -855,6 +1182,7 @@ impl Database {
         if let Some(path) = legacy_path {
             paths.push(path);
         }
+        Self::detach_memory_source_conn(&conn, "dictation", id)?;
         conn.execute("DELETE FROM transcriptions WHERE id = ?1", [id])?;
         conn.execute(
             "DELETE FROM audio_assets WHERE owner_type = 'dictation' AND owner_id = ?1",
@@ -881,6 +1209,7 @@ impl Database {
             let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
             paths.extend(rows.filter_map(|r| r.ok()));
         }
+        Self::detach_all_memory_sources_conn(&conn, "dictation")?;
         conn.execute("DELETE FROM transcriptions", [])?;
         conn.execute(
             "DELETE FROM audio_assets WHERE owner_type = 'dictation'",
@@ -1224,6 +1553,8 @@ impl Database {
             }
         }
 
+        Self::detach_memory_source_conn(&conn, "conversation", conversation_id)?;
+
         // Explicit cascade, not just relying on the FK pragma: belt-and-braces
         // in case a future connection opens without `PRAGMA foreign_keys = ON`.
         conn.execute(
@@ -1381,6 +1712,7 @@ impl Database {
         if let Some(path) = legacy_path {
             paths.push(path);
         }
+        Self::detach_memory_source_conn(&conn, "note", note_id)?;
         conn.execute("DELETE FROM notes WHERE id = ?1", [note_id])?;
         conn.execute(
             "DELETE FROM audio_assets WHERE owner_type = 'note' AND owner_id = ?1",
@@ -1501,6 +1833,113 @@ mod tests {
         assert_eq!(item.reconciliation_status, "accepted");
         assert_eq!(item.reconciliation_confidence, Some(0.97));
         assert_eq!(item.reconciliation_evidence.as_deref(), Some("recent"));
+    }
+
+    fn acme_memory(object: &str) -> MemoryCandidate {
+        MemoryCandidate {
+            kind: "fact".into(),
+            canonical_text: format!("Oscar works at {object}"),
+            subject: Some("Oscar".into()),
+            predicate: Some("works at".into()),
+            object: Some(object.into()),
+            aliases: vec![object.into()],
+            confidence: 0.92,
+        }
+    }
+
+    #[test]
+    fn memory_requires_independent_support_and_downgrades_on_source_delete() {
+        let db = Database::new_in_memory().unwrap();
+        let first = db
+            .save_transcription("I work at Acme", None, "none", None, None, None)
+            .unwrap();
+        let second = db
+            .save_transcription("My employer is Acme", None, "none", None, None, None)
+            .unwrap();
+        db.store_memory_candidates("dictation", first, &[acme_memory("Acme")])
+            .unwrap();
+        assert!(db.get_memory_context("Acme", 12).unwrap().is_empty());
+
+        db.store_memory_candidates("dictation", second, &[acme_memory("Acme")])
+            .unwrap();
+        let confirmed = db.get_memory_context("Acme", 12).unwrap();
+        assert_eq!(confirmed.len(), 1);
+        assert_eq!(confirmed[0].support_count, 2);
+
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE memory_items SET last_supported_at = datetime('now', '-181 days')",
+                [],
+            )
+            .unwrap();
+        assert!(db.get_memory_context("Acme", 12).unwrap().is_empty());
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE memory_items SET last_supported_at = CURRENT_TIMESTAMP",
+                [],
+            )
+            .unwrap();
+
+        db.delete_transcription(first, Path::new("")).unwrap();
+        assert!(
+            db.store_memory_candidates("dictation", first, &[acme_memory("Late result")])
+                .is_err()
+        );
+        assert!(db.get_memory_context("Acme", 12).unwrap().is_empty());
+        let state: (String, i64) = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT state, support_count FROM memory_items", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(state, ("provisional".into(), 1));
+    }
+
+    #[test]
+    fn conflicting_memory_marks_prior_fact_contradicted_and_reset_clears_all() {
+        let db = Database::new_in_memory().unwrap();
+        let first = db
+            .save_transcription("I work at Acme", None, "none", None, None, None)
+            .unwrap();
+        let second = db
+            .save_transcription("Acme is my employer", None, "none", None, None, None)
+            .unwrap();
+        let note = db.create_note().unwrap();
+        db.store_memory_candidates("dictation", first, &[acme_memory("Acme")])
+            .unwrap();
+        db.store_memory_candidates("dictation", second, &[acme_memory("Acme")])
+            .unwrap();
+        db.store_memory_candidates("note", note, &[acme_memory("Globex")])
+            .unwrap();
+        let state: String = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT state FROM memory_items WHERE canonical_text = 'Oscar works at Acme'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(state, "contradicted");
+        db.delete_note(note, Path::new("")).unwrap();
+        let restored = db.get_memory_context("Acme", 12).unwrap();
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].support_count, 2);
+        db.reset_memory().unwrap();
+        let count: i64 = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM memory_items", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]

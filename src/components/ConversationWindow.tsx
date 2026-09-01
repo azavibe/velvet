@@ -62,6 +62,7 @@ function ConversationWindowInner() {
   const note = useNoteCapture({
     groqApiKey: settings.groqApiKey,
     micDeviceId: settings.conversationMicDeviceId,
+    settings,
     onToast: onCaptureToast,
   });
 

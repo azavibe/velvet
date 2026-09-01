@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-01
+
+### Highlights
+
+- Optional long-term memory can learn durable names, facts, preferences, and relationships from completed dictations, notes, and conversations.
+- Learned information stays local, requires repeated independent support before use, and can be erased at any time from Settings.
+- Confirmed memory now helps contextual speech correction and keeps conversation suggestions focused on recent turns.
+
+### Features
+
+- Added opt-in, bounded cloud extraction after completed Standard dictations, notes, and conversations. Extraction uses the configured reasoning provider, ignores malformed or low-confidence output, and never blocks the normal capture flow.
+- Added local source-linked entities, aliases, facts, relationships, and summary records with provisional, confirmed, and contradicted states. Two independent sources are required before a memory can influence correction.
+- Added confirmed-memory evidence to contextual correction and bounded conversation suggestions to the latest 24 turns, 6,000 characters, and 12 relevant confirmed memories.
+- Added automatic-memory and reset controls with explicit cloud-processing/local-storage privacy copy in all nine interface languages.
+
+### Safety and privacy
+
+- Memory learns from raw provider transcripts rather than its own corrected or enhanced output, preventing a correction feedback loop.
+- Deleting a dictation, note, or conversation removes its source links and deletes or downgrades dependent memory. Late extraction cannot recreate memory for an already deleted source.
+- Conflicting facts are marked contradicted, stale memories lose retrieval confidence, prompts and candidate counts are bounded, and memory is disabled by default.
+
+### Internal
+
+- Added SQLite migration v8 and typed commands for memory storage, retrieval, and reset.
+- Added extraction parsing, prompt-bound, promotion, contradiction, inactivity, source-deletion, retrieval, and correction-evidence tests.
+
 ## [0.9.0] - 2026-09-01
 
 ### Highlights

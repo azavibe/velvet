@@ -8,6 +8,7 @@ import {
   getAgentAliases,
   getCustomDictionary,
   getTranscriptions,
+  getMemoryContext,
 } from "@/services/tauriApi";
 import {
   getSystemPrompt,
@@ -44,6 +45,7 @@ export interface TranscriptionSettings {
   useCustomPrompt: boolean | null;
   customSystemPrompt: string | null;
   contextualCorrectionEnabled: boolean | null;
+  automaticMemoryEnabled: boolean | null;
   agentName: string;
   agentAliases: string[];
   debugMode: boolean | null;
@@ -67,6 +69,7 @@ export async function loadTranscriptionSettings(): Promise<TranscriptionSettings
     useCustomPrompt,
     customSystemPrompt,
     contextualCorrectionEnabled,
+    automaticMemoryEnabled,
     agentName,
     agentAliases,
     debugMode,
@@ -86,6 +89,7 @@ export async function loadTranscriptionSettings(): Promise<TranscriptionSettings
     getSetting<boolean>("useCustomPrompt"),
     getSetting<string>("customSystemPrompt"),
     getSetting<boolean>("contextualCorrectionEnabled"),
+    getSetting<boolean>("automaticMemoryEnabled"),
     getAgentName(),
     getAgentAliases(),
     getSetting<boolean>("debugMode"),
@@ -107,6 +111,7 @@ export async function loadTranscriptionSettings(): Promise<TranscriptionSettings
     useCustomPrompt,
     customSystemPrompt,
     contextualCorrectionEnabled,
+    automaticMemoryEnabled,
     agentName,
     agentAliases,
     debugMode,
@@ -246,11 +251,16 @@ export async function reconcile(
     return { text: rawText, status: "failed", confidence: null, evidence: null };
   }
   let recentTexts: string[] = [];
+  let knownMemories: Awaited<ReturnType<typeof getMemoryContext>> = [];
   try {
-    const recent = await getTranscriptions(8, 0);
+    const [recent, memories] = await Promise.all([
+      getTranscriptions(8, 0),
+      getMemoryContext(rawText, 12),
+    ]);
     recentTexts = recent.map(
       (item) => item.processed_text || item.reconciled_text || item.original_text,
     );
+    knownMemories = memories;
   } catch {
     // Context lookup is optional. Dictionary/agent evidence can still work.
   }
@@ -262,6 +272,7 @@ export async function reconcile(
       agentName: settings.agentName,
       agentAliases: settings.agentAliases,
       recentTexts,
+      knownMemories,
       language,
     },
     (systemPrompt, userPrompt) =>

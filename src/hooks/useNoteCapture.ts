@@ -9,25 +9,32 @@ import {
   onNoteError,
   onNoteStarted,
   onNoteStopped,
+  getNote,
   type NoteUtteranceEvent,
 } from "@/services/tauriApi";
+import type { Settings } from "@/hooks/useSettings";
+import { extractAndStoreMemory } from "@/services/memory";
 
 interface UseNoteCaptureOptions {
   groqApiKey: string;
   micDeviceId?: string;
+  settings: Settings;
   onToast?: (props: { title?: string; description?: string }) => void;
 }
 
 /** Mirrors useConversation's shape (broadcast events so any window stays in
  *  sync) but single-channel with explicit pause/resume instead of
  *  personas/suggestions. See commands/notes.rs for the backend side. */
-export function useNoteCapture({ groqApiKey, micDeviceId, onToast }: UseNoteCaptureOptions) {
+export function useNoteCapture({ groqApiKey, micDeviceId, settings, onToast }: UseNoteCaptureOptions) {
   const [noteId, setNoteId] = useState<number | null>(null);
   const [isPaused, setIsPaused] = useState(false);
   const [utterances, setUtterances] = useState<NoteUtteranceEvent[]>([]);
 
   const noteIdRef = useRef<number | null>(null);
   noteIdRef.current = noteId;
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const memoryExtractionInFlightRef = useRef(new Set<number>());
 
   // See useConversation.ts's identical onToastRef for why: an inline
   // `onToast` gets a new identity every render, and every incoming
@@ -37,6 +44,25 @@ export function useNoteCapture({ groqApiKey, micDeviceId, onToast }: UseNoteCapt
   // gap would be silently dropped.
   const onToastRef = useRef(onToast);
   onToastRef.current = onToast;
+
+  const scheduleMemoryExtraction = useCallback((stoppedId: number) => {
+    if (
+      !settingsRef.current.automaticMemoryEnabled
+      || memoryExtractionInFlightRef.current.has(stoppedId)
+    ) return;
+    memoryExtractionInFlightRef.current.add(stoppedId);
+    globalThis.setTimeout(() => {
+      void getNote(stoppedId)
+        .then((note) => extractAndStoreMemory(
+          note.raw_transcript,
+          "note",
+          stoppedId,
+          settingsRef.current,
+        ))
+        .catch(() => undefined)
+        .finally(() => memoryExtractionInFlightRef.current.delete(stoppedId));
+    }, 1_000);
+  }, []);
 
   useEffect(() => {
     const unlistenUtterance = onNoteUtterance((payload) => {
@@ -54,8 +80,10 @@ export function useNoteCapture({ groqApiKey, micDeviceId, onToast }: UseNoteCapt
       setNoteId(id);
     });
     const unlistenStopped = onNoteStopped(() => {
+      const stoppedId = noteIdRef.current;
       setNoteId(null);
       setIsPaused(false);
+      if (stoppedId != null) scheduleMemoryExtraction(stoppedId);
     });
 
     return () => {
@@ -64,7 +92,7 @@ export function useNoteCapture({ groqApiKey, micDeviceId, onToast }: UseNoteCapt
       unlistenStarted.then((fn) => fn());
       unlistenStopped.then((fn) => fn());
     };
-  }, []);
+  }, [scheduleMemoryExtraction]);
 
   const start = useCallback(
     async (existingNoteId?: number) => {
@@ -104,11 +132,13 @@ export function useNoteCapture({ groqApiKey, micDeviceId, onToast }: UseNoteCapt
   }, []);
 
   const stop = useCallback(async () => {
-    if (noteIdRef.current == null) return;
+    const stoppedId = noteIdRef.current;
+    if (stoppedId == null) return;
     await stopNoteCapture();
+    scheduleMemoryExtraction(stoppedId);
     setNoteId(null);
     setIsPaused(false);
-  }, []);
+  }, [scheduleMemoryExtraction]);
 
   return {
     noteId,

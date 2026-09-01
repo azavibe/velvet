@@ -20,7 +20,7 @@ use crate::audio::conversation::{
     Channel, ConversationCapture, ConversationChunk, ConversationState,
 };
 use crate::audio::recorder::TARGET_SAMPLE_RATE;
-use crate::database::{ConversationDetail, ConversationSummary, Database};
+use crate::database::{ConversationDetail, ConversationSummary, ConversationUtterance, Database};
 use crate::reasoning::{self, ReasoningRequest};
 use crate::tray::{self, RecordingSource};
 
@@ -582,8 +582,41 @@ pub fn delete_conversation(
         .str_err()
 }
 
-/// Build a suggested reply from a persona's system prompt plus the full
-/// transcript so far, using the same reasoning pipeline enhancement uses.
+const MAX_SUGGESTION_UTTERANCES: usize = 24;
+const MAX_SUGGESTION_TRANSCRIPT_CHARS: usize = 6_000;
+const MAX_SUGGESTION_UTTERANCE_CHARS: usize = 500;
+
+fn bounded_suggestion_transcript(utterances: &[ConversationUtterance]) -> String {
+    let mut selected = Vec::new();
+    let mut total = 0_usize;
+    for utterance in utterances.iter().rev().take(MAX_SUGGESTION_UTTERANCES) {
+        let text = utterance
+            .text
+            .chars()
+            .take(MAX_SUGGESTION_UTTERANCE_CHARS)
+            .collect::<String>();
+        let line = format!(
+            "{}: {}",
+            if utterance.channel == "me" {
+                "Me"
+            } else {
+                "Them"
+            },
+            text
+        );
+        let line_chars = line.chars().count();
+        if total + line_chars > MAX_SUGGESTION_TRANSCRIPT_CHARS {
+            break;
+        }
+        total += line_chars;
+        selected.push(line);
+    }
+    selected.reverse();
+    selected.join("\n")
+}
+
+/// Build a suggested reply from a persona's system prompt plus bounded recent
+/// transcript and confirmed local memory, using the reasoning pipeline.
 /// Fired either automatically on turn-end (loopback VAD hangover, driven
 /// from the frontend today) or on demand via the always-live hotkey.
 #[tauri::command]
@@ -604,21 +637,21 @@ pub async fn generate_suggestion(
         return Err("No transcript yet".to_string());
     }
 
-    let transcript = detail
-        .utterances
-        .iter()
-        .map(|u| {
-            format!(
-                "{}: {}",
-                if u.channel == "me" { "Me" } else { "Them" },
-                u.text
-            )
-        })
+    let transcript = bounded_suggestion_transcript(&detail.utterances);
+    let memory_query = format!("{}\n{}", persona_name.as_deref().unwrap_or(""), transcript);
+    let memory = db
+        .get_memory_context(&memory_query, 12)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|item| format!("- {}", item.canonical_text))
         .collect::<Vec<_>>()
         .join("\n");
 
     let req = ReasoningRequest {
-        text: format!("[CONVERSATION_TRANSCRIPT]\n{}", transcript),
+        text: format!(
+            "[CONFIRMED_LOCAL_MEMORY]\n{}\n\n[RECENT_CONVERSATION_TRANSCRIPT]\n{}",
+            memory, transcript
+        ),
         model,
         provider,
         system_prompt: persona_system_prompt,
@@ -664,6 +697,24 @@ pub async fn generate_suggestion(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn suggestion_transcript_keeps_only_bounded_recent_turns() {
+        let utterances = (0..40)
+            .map(|index| ConversationUtterance {
+                id: index,
+                conversation_id: 1,
+                channel: if index % 2 == 0 { "me" } else { "them" }.into(),
+                started_at_ms: index,
+                text: format!("turn-{index} {}", "x".repeat(600)),
+            })
+            .collect::<Vec<_>>();
+        let transcript = bounded_suggestion_transcript(&utterances);
+        assert!(transcript.chars().count() <= MAX_SUGGESTION_TRANSCRIPT_CHARS);
+        assert!(!transcript.contains("turn-0 "));
+        assert!(transcript.contains("turn-39 "));
+        assert!(transcript.lines().count() <= MAX_SUGGESTION_UTTERANCES);
+    }
 
     #[test]
     fn word_overlap_detects_near_identical_echo() {

@@ -210,6 +210,50 @@ pub fn run(conn: &Connection) -> Result<()> {
         conn.execute_batch("PRAGMA user_version = 7;")?;
     }
 
+    // v8: bounded, source-aware long-term memory. A memory item is only
+    // confirmed after independent source support; aliases and source links
+    // cascade when an item is removed.
+    if version < 8 {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS memory_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL CHECK (kind IN ('entity', 'fact', 'relationship', 'summary')),
+                canonical_text TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                subject TEXT,
+                predicate TEXT,
+                object TEXT,
+                confidence REAL NOT NULL DEFAULT 0.0 CHECK (confidence >= 0.0 AND confidence <= 1.0),
+                state TEXT NOT NULL DEFAULT 'provisional'
+                    CHECK (state IN ('provisional', 'confirmed', 'contradicted')),
+                support_count INTEGER NOT NULL DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_supported_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS memory_aliases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                memory_id INTEGER NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,
+                alias TEXT NOT NULL COLLATE NOCASE,
+                UNIQUE(memory_id, alias)
+            );
+            CREATE TABLE IF NOT EXISTS memory_sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                memory_id INTEGER NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,
+                source_type TEXT NOT NULL CHECK (source_type IN ('dictation', 'conversation', 'note')),
+                source_id INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(memory_id, source_type, source_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_items_state_recent
+                ON memory_items(state, last_supported_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_memory_sources_owner
+                ON memory_sources(source_type, source_id);
+            CREATE INDEX IF NOT EXISTS idx_memory_aliases_alias
+                ON memory_aliases(alias);
+            PRAGMA user_version = 8;",
+        )?;
+    }
+
     #[cfg(debug_assertions)]
     if v6_pending {
         log::info!(
@@ -282,13 +326,13 @@ mod tests {
     }
 
     #[test]
-    fn full_run_bumps_user_version_to_7() {
+    fn full_run_bumps_user_version_to_8() {
         let conn = Connection::open_in_memory().unwrap();
         run(&conn).unwrap();
         let v: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(v, 7);
+        assert_eq!(v, 8);
     }
 
     #[test]
@@ -320,7 +364,7 @@ mod tests {
         let v: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(v, 7);
+        assert_eq!(v, 8);
     }
 
     #[test]
@@ -538,5 +582,33 @@ mod tests {
                 "dictionary".into()
             )
         );
+    }
+
+    #[test]
+    fn v8_creates_source_aware_memory_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        run(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO memory_items (kind, canonical_text, confidence)
+             VALUES ('entity', 'Acme Corporation', 0.9)",
+            [],
+        )
+        .unwrap();
+        let memory_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO memory_aliases (memory_id, alias) VALUES (?1, 'Acme')",
+            [memory_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO memory_sources (memory_id, source_type, source_id)
+             VALUES (?1, 'dictation', 42)",
+            [memory_id],
+        )
+        .unwrap();
+        let source_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM memory_sources", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(source_count, 1);
     }
 }

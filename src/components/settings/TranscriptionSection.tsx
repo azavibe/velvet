@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { SettingsSection, SettingsRow } from "@/components/ui/SettingsSection";
 import { Toggle } from "@/components/ui/toggle";
@@ -6,9 +7,24 @@ import ProviderModelSelector from "./ProviderModelSelector";
 import LiveProviderModelSelector from "./LiveProviderModelSelector";
 import { LiveConsentModal } from "@/components/ui/LiveConsentModal";
 import type { SectionProps } from "./types";
+import { Button } from "@/components/ui/button";
+import { resetMemory } from "@/services/tauriApi";
 
-export default function TranscriptionSection({ settings, update }: SectionProps) {
+export default function TranscriptionSection({ settings, update, toast }: SectionProps) {
   const { t } = useTranslation();
+  const [resettingMemory, setResettingMemory] = useState(false);
+
+  async function handleResetMemory() {
+    setResettingMemory(true);
+    try {
+      await resetMemory();
+      toast?.({ description: t("transcription.memory.resetSuccess"), variant: "success" });
+    } catch {
+      toast?.({ description: t("transcription.memory.resetError"), variant: "destructive" });
+    } finally {
+      setResettingMemory(false);
+    }
+  }
   return (
     <SettingsSection title={t("transcription.title")} description={t("transcription.description")}>
       {/* Mode toggle */}
@@ -116,6 +132,29 @@ export default function TranscriptionSection({ settings, update }: SectionProps)
           />
         </div>
       )}
+
+      <SettingsRow
+        label={t("transcription.memory.label")}
+        description={t("transcription.memory.description")}
+      >
+        <Toggle
+          checked={settings.automaticMemoryEnabled}
+          onChange={(value) => update("automaticMemoryEnabled", value)}
+        />
+      </SettingsRow>
+      <SettingsRow
+        label={t("transcription.memory.resetLabel")}
+        description={t("transcription.memory.resetDescription")}
+      >
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={resettingMemory}
+          onClick={() => void handleResetMemory()}
+        >
+          {t("transcription.memory.reset")}
+        </Button>
+      </SettingsRow>
     </SettingsSection>
   );
 }

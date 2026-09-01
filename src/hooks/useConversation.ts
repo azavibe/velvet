@@ -9,11 +9,13 @@ import {
   onConversationError,
   onConversationStarted,
   onConversationStopped,
+  getConversation,
   type ConversationUtteranceEvent,
   type ConversationSuggestionEvent,
 } from "@/services/tauriApi";
 import type { Persona } from "@/models/persona";
 import type { Settings } from "@/hooks/useSettings";
+import { extractAndStoreMemory } from "@/services/memory";
 
 interface UseConversationOptions {
   settings: Settings;
@@ -61,6 +63,9 @@ export function useConversation({
 
   const triggerModeRef = useRef(settings.conversationTriggerMode);
   triggerModeRef.current = settings.conversationTriggerMode;
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const memoryExtractionInFlightRef = useRef(new Set<number>());
 
   // Callers (ConversationWindow) pass an inline `onToast` that gets a new
   // identity every render. Reading it through a ref — instead of putting it
@@ -73,6 +78,30 @@ export function useConversation({
   // of sentences transcribed, then nothing" — not a capture bug.
   const onToastRef = useRef(onToast);
   onToastRef.current = onToast;
+
+  const scheduleMemoryExtraction = useCallback((stoppedId: number) => {
+    if (
+      !autoTrigger
+      || !settingsRef.current.automaticMemoryEnabled
+      || memoryExtractionInFlightRef.current.has(stoppedId)
+    ) return;
+    memoryExtractionInFlightRef.current.add(stoppedId);
+    // The capture consumer can persist its final VAD chunk shortly after
+    // the stopped event. Give it one bounded grace period before reading.
+    globalThis.setTimeout(() => {
+      void getConversation(stoppedId)
+        .then((detail) => extractAndStoreMemory(
+          detail.utterances
+            .map((utterance) => `${utterance.channel}: ${utterance.text}`)
+            .join("\n"),
+          "conversation",
+          stoppedId,
+          settingsRef.current,
+        ))
+        .catch(() => undefined)
+        .finally(() => memoryExtractionInFlightRef.current.delete(stoppedId));
+    }, 1_000);
+  }, [autoTrigger]);
 
   const forceSuggestion = useCallback(async () => {
     const id = conversationIdRef.current;
@@ -129,8 +158,8 @@ export function useConversation({
       setConversationId(payload.conversation_id);
     });
     const unlistenStopped = onConversationStopped((stoppedId) => {
-      if (stoppedId !== conversationIdRef.current) return;
-      setConversationId(null);
+      if (stoppedId === conversationIdRef.current) setConversationId(null);
+      scheduleMemoryExtraction(stoppedId);
     });
 
     return () => {
@@ -140,7 +169,7 @@ export function useConversation({
       unlistenStarted.then((fn) => fn());
       unlistenStopped.then((fn) => fn());
     };
-  }, [forceSuggestion]);
+  }, [forceSuggestion, scheduleMemoryExtraction]);
 
   const start = useCallback(async () => {
     if (!groqApiKey) {
@@ -175,8 +204,9 @@ export function useConversation({
     const id = conversationIdRef.current;
     if (id == null) return;
     await stopConversation(id, title);
+    scheduleMemoryExtraction(id);
     setConversationId(null);
-  }, []);
+  }, [scheduleMemoryExtraction]);
 
   return {
     conversationId,
