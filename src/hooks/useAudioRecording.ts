@@ -209,6 +209,11 @@ export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecording
           audioData,
         );
         console.log("[Whisperi] Empty transcription archived for retry.");
+        if (transcriptionEngine !== "cloud") {
+          throw new Error(
+            "The local model did not recognize any speech. The recording was saved in History.",
+          );
+        }
         setPhase("idle");
         return;
       }

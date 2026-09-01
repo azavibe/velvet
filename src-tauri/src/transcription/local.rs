@@ -1,20 +1,12 @@
 use std::io::Cursor;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::path::Path;
 
 use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, get_lang_str,
 };
 
 #[derive(Default)]
-pub struct LocalTranscriptionState {
-    loaded: Mutex<Option<LoadedModel>>,
-}
-
-struct LoadedModel {
-    path: PathBuf,
-    context: Arc<WhisperContext>,
-}
+pub struct LocalTranscriptionState;
 
 fn decode_wav(audio_data: &[u8]) -> Result<Vec<f32>, String> {
     let mut reader = hound::WavReader::new(Cursor::new(audio_data))
@@ -41,24 +33,6 @@ fn decode_wav(audio_data: &[u8]) -> Result<Vec<f32>, String> {
 }
 
 impl LocalTranscriptionState {
-    fn context_for(&self, model_path: &Path) -> Result<Arc<WhisperContext>, String> {
-        let mut loaded = self.loaded.lock().unwrap();
-        if let Some(model) = loaded.as_ref()
-            && model.path == model_path
-        {
-            return Ok(model.context.clone());
-        }
-        let context = Arc::new(
-            WhisperContext::new_with_params(model_path, WhisperContextParameters::default())
-                .map_err(|error| format!("local_model_load_failed: {error}"))?,
-        );
-        *loaded = Some(LoadedModel {
-            path: model_path.to_path_buf(),
-            context: context.clone(),
-        });
-        Ok(context)
-    }
-
     pub fn transcribe(
         &self,
         model_path: &Path,
@@ -67,14 +41,21 @@ impl LocalTranscriptionState {
         prompt: Option<&str>,
     ) -> Result<(String, Option<String>), String> {
         let samples = decode_wav(audio_data)?;
-        let context = self.context_for(model_path)?;
+        // Load per request so the GGML weights are released as soon as this
+        // transcription finishes. Keeping the context cached retained
+        // hundreds of MB indefinitely after a single local dictation.
+        let context =
+            WhisperContext::new_with_params(model_path, WhisperContextParameters::default())
+                .map_err(|error| format!("local_model_load_failed: {error}"))?;
         let mut state = context
             .create_state()
             .map_err(|error| format!("local_state_create_failed: {error}"))?;
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        // Local transcription is compute-heavy. Use at most half the logical
+        // CPUs (capped at four) so dictation does not monopolize the machine.
         let threads = std::thread::available_parallelism()
-            .map(|count| count.get().min(8) as i32)
-            .unwrap_or(4);
+            .map(|count| (count.get() / 2).clamp(1, 4) as i32)
+            .unwrap_or(2);
         params.set_n_threads(threads);
         params.set_translate(false);
         params.set_print_progress(false);
@@ -98,7 +79,10 @@ impl LocalTranscriptionState {
             );
         }
         let detected_language = get_lang_str(state.full_lang_id_from_state()).map(str::to_string);
-        Ok((text.trim().to_string(), detected_language))
+        let text = text.trim().to_string();
+        drop(state);
+        drop(context);
+        Ok((text, detected_language))
     }
 }
 

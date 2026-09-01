@@ -11,19 +11,24 @@ import { settingsIntentConsumer } from "@/services/captureIntentConsumer";
 
 type AppView = "overlay" | "settings" | "conversation";
 
+function currentView(): AppView {
+  const label = getCurrentWebviewWindow().label;
+  if (label === "settings") return "settings";
+  if (label === "conversation") return "conversation";
+  return "overlay";
+}
+
 function App() {
-  const [view, setView] = useState<AppView>("overlay");
+  // Resolve the native window before the first render. Starting every WebView
+  // as the overlay briefly mounted its hotkeys and startup effects in the
+  // hidden Settings and Conversation windows as well.
+  const [view] = useState<AppView>(currentView);
   const { i18n } = useTranslation();
 
   useEffect(() => {
     startupMark("React/WebView initialized");
     const label = getCurrentWebviewWindow().label;
     startupMark("WebView window resolved", { has_window_label: label.length > 0 });
-    if (label === "settings") {
-      setView("settings");
-    } else if (label === "conversation") {
-      setView("conversation");
-    }
   }, []);
 
   // Sync i18next language from stored setting on mount + cross-window changes

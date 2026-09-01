@@ -12,7 +12,7 @@
 
 ### Features
 
-- Added Local as a transcription provider with CPU-only `whisper-rs` inference and reusable loaded-model state.
+- Added Local as a transcription provider with CPU-only `whisper-rs` inference and per-request model lifetime so memory is released after transcription.
 - Added Tiny, Base, Small, and quantized Large v3 Turbo model downloads with progress, cancellation, resume, disk-space checks, exact-size validation, SHA-256 verification, and deletion.
 - Added a local-fallback setting, local/fallback engine badges, and in-place local re-transcription for any archived Standard dictation.
 - Preserved language modes and custom-dictionary prompting for local inference. Live dictation, Conversations, and Notes retain their existing cloud engines.
@@ -21,6 +21,8 @@
 
 - Failed provider requests and empty transcription results now create recoverable History entries with their WAV recordings intact.
 - Failed recordings no longer distort total or average transcription analytics.
+- Local inference now filters whisper.cpp control tokens and non-speech captions, reports empty recognition visibly, caps CPU use at four threads, and unloads model weights after every request.
+- Native whisper.cpp decoder diagnostics are suppressed, and update checks are manual from About so an unavailable release endpoint no longer floods startup logs.
 
 ### Internal
 

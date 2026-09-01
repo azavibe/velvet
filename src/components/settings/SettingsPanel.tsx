@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import {
   Settings,
@@ -57,18 +56,10 @@ const SECTION_DEFS = [
 
 function SettingsPanelInner() {
   const [section, setSection] = useState<Section>("general");
-  const [updateAvailable, setUpdateAvailable] = useState(false);
   const [whatsNew, setWhatsNew] = useState<{ version: string; changelog: string } | null>(null);
   const { t } = useTranslation();
   const { settings, update, loaded } = useSettings();
   const { toast } = useToast();
-
-  useEffect(() => {
-    const unlisten = listen<{ version: string }>("update-available", () => {
-      setUpdateAvailable(true);
-    });
-    return () => { unlisten.then((fn) => fn()); };
-  }, []);
 
   // What's New: check on mount and retry on window focus.
   // lastWhatsNewVersion is set only when the user dismisses the modal,
@@ -170,9 +161,6 @@ function SettingsPanelInner() {
             >
               <Icon className="w-4 h-4" />
               {t(labelKey)}
-              {id === "about" && updateAvailable && (
-                <span className="ml-auto w-2 h-2 rounded-full bg-warning animate-pulse" title={t("nav.updateAvailable")} />
-              )}
             </button>
           ))}
         </nav>

@@ -306,7 +306,9 @@ pub async fn transcribe_cloud(
         transcription::cloud::strip_dictionary_edge_echo(&stripped, &dictionary, &protected_terms);
     // Whole-output hallucination phrases (silence artifacts) are blanked; the
     // frontend's empty-transcription check then skips the result silently.
-    let stripped = if transcription::hallucination::is_known_hallucination(&stripped) {
+    let stripped = if transcription::hallucination::is_known_hallucination(&stripped)
+        || transcription::hallucination::is_non_speech_marker(&stripped)
+    {
         log::info!("[Whisperi] Dropped known hallucination phrase output");
         String::new()
     } else {
@@ -357,7 +359,9 @@ pub async fn transcribe_local(
         transcription::cloud::strip_prompt_echo(&output.0, Some(prompt.as_str()), &protected_terms);
     let stripped =
         transcription::cloud::strip_dictionary_edge_echo(&stripped, &dictionary, &protected_terms);
-    let stripped = if transcription::hallucination::is_known_hallucination(&stripped) {
+    let stripped = if transcription::hallucination::is_known_hallucination(&stripped)
+        || transcription::hallucination::is_non_speech_marker(&stripped)
+    {
         String::new()
     } else {
         stripped

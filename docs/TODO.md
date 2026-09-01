@@ -93,7 +93,7 @@ Detailed [implementation plan](plans/conversational-assistant.md).
 
 - [x] Preserve failed and empty Standard-dictation recordings, exclude failures from analytics, and support retrying them from History.
 - [x] Add Local as a peer transcription provider with resumable, cancellable, SHA-256-verified GGML model downloads and deletion.
-- [x] Run CPU-only local inference through linked `whisper-rs`, reuse loaded models, and retain language/dictionary prompting.
+- [x] Run CPU-only local inference through linked `whisper-rs`, release models after each request, and retain language/dictionary prompting.
 - [x] Fall back to the selected local model on cloud errors or missing keys, while leaving empty results, Live, Conversations, and Notes unchanged.
 - [x] Show local/fallback provenance in History and allow any archived dictation to be re-transcribed locally in place.
 - [ ] Add an optional queued batch action for multiple failed recordings after single-item retry has production usage.

@@ -112,6 +112,10 @@ fn override_min_window_size(window: &tauri::WebviewWindow, logical_w: i32, logic
 pub fn run() {
     // Force ANSI colors even when stdout is piped (bun → cargo → app).
     colored::control::set_override(true);
+    // whisper.cpp writes verbose decoder diagnostics directly to stderr by
+    // default. With whisper-rs' no-backend hook these are intentionally
+    // discarded; application errors still flow through our own Result/logs.
+    whisper_rs::install_logging_hooks();
 
     tauri::Builder::default()
         .register_asynchronous_uri_scheme_protocol("recording", |ctx, request, responder| {
@@ -200,7 +204,7 @@ pub fn run() {
             app.manage(crate::commands::notes::NoteAudioArchive::default());
             app.manage(crate::commands::local_models::LocalModelDownloadState::default());
             app.manage(std::sync::Arc::new(
-                crate::transcription::local::LocalTranscriptionState::default(),
+                crate::transcription::local::LocalTranscriptionState,
             ));
 
             // Initialize live dictation session state. Wrap in Arc so the
