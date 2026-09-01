@@ -52,6 +52,8 @@
 
   "transcription.title": "클라우드 제공업체",
   "transcription.description": "클라우드 음성 인식 서비스 선택",
+  "transcription.contextualCorrection.label": "자동 문맥 음성 교정",
+  "transcription.contextualCorrection.description": "사전과 최근 받아쓰기를 사용해 가능성이 높은 인식 오류만 신중하게 교정합니다. 원본 텍스트는 기록에 보존되며 선택된 텍스트는 AI 제공업체에서 처리됩니다.",
   "transcription.mode.label": "모드",
   "transcription.mode.standard": "표준",
   "transcription.mode.standard.description": "녹음 후 중지 시 음성 인식을 시작합니다.",
@@ -257,6 +259,9 @@
   "history.loading": "Loading…",
   "history.audioRecoveryFailed": "오디오 복구에 실패했습니다",
   "history.emptyTranscript": "(no transcript)",
+  "history.rawAsr": "원본 음성 인식",
+  "history.contextualCorrection": "문맥 교정",
+  "history.finalText": "최종 텍스트",
   "history.speakerMe": "Me",
   "history.speakerThem": "Them",
   "history.audio.title": "보관된 오디오",

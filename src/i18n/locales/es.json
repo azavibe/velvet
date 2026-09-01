@@ -52,6 +52,8 @@
 
   "transcription.title": "Proveedor en la nube",
   "transcription.description": "Elegir un servicio de transcripción en la nube",
+  "transcription.contextualCorrection.label": "Corrección contextual automática del habla",
+  "transcription.contextualCorrection.description": "Corrige de forma conservadora posibles errores de reconocimiento usando tu diccionario y dictados recientes. El texto original permanece en el historial; el texto seleccionado lo procesa tu proveedor de IA.",
   "transcription.mode.label": "Modo",
   "transcription.mode.standard": "Estándar",
   "transcription.mode.standard.description": "Graba y transcribe al detener.",
@@ -257,6 +259,9 @@
   "history.loading": "Loading…",
   "history.audioRecoveryFailed": "Falló la recuperación del audio",
   "history.emptyTranscript": "(no transcript)",
+  "history.rawAsr": "Reconocimiento de voz original",
+  "history.contextualCorrection": "Corrección contextual",
+  "history.finalText": "Texto final",
   "history.speakerMe": "Me",
   "history.speakerThem": "Them",
   "history.audio.title": "Audio archivado",

@@ -568,7 +568,37 @@ export default function StatisticsSection({ settings, toast }: { settings: Setti
 
                   {isExpanded && (
                     <div className="px-3 pb-3 space-y-2.5">
-                      {item.kind === "note" && isEditing ? (
+                      {item.kind === "dictation" && item.data.reconciled_text ? (
+                        <div className="space-y-2 rounded-control bg-surface-2 px-3 py-2 max-h-64 overflow-y-auto">
+                          <div>
+                            <p className="text-[11px] font-medium text-muted-foreground">
+                              {t("history.rawAsr")}
+                            </p>
+                            <p className="text-sm text-foreground whitespace-pre-line">
+                              {item.data.original_text}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-[11px] font-medium text-primary">
+                              {t("history.contextualCorrection")}
+                            </p>
+                            <p className="text-sm text-foreground whitespace-pre-line">
+                              {item.data.reconciled_text}
+                            </p>
+                          </div>
+                          {item.data.processed_text
+                            && item.data.processed_text !== item.data.reconciled_text && (
+                            <div>
+                              <p className="text-[11px] font-medium text-muted-foreground">
+                                {t("history.finalText")}
+                              </p>
+                              <p className="text-sm text-foreground whitespace-pre-line">
+                                {item.data.processed_text}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      ) : item.kind === "note" && isEditing ? (
                         <div className="space-y-2">
                           <input
                             type="text"

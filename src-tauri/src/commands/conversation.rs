@@ -507,8 +507,9 @@ pub fn stop_conversation(
     // chunk is still transcribed asynchronously by the consumer task
     // spawned in start_conversation, so a `conversation-utterance` event
     // for it can arrive slightly after this command returns.
-    ConversationCapture::stop(&**conv_state).str_err()?;
+    let stop_result = ConversationCapture::stop(&**conv_state).str_err();
     tray::stop_recording(&app, RecordingSource::Conversation, None);
+    stop_result?;
     let recordings_root = recordings_dir(&app).str_err()?;
     let archive = app.state::<ConversationAudioArchive>();
     if archive.wait_for_consumer().is_err() {
@@ -542,9 +543,14 @@ pub fn is_conversation_active(
 /// on an empty transcript.
 #[tauri::command]
 pub fn get_conversation_error(
+    app: AppHandle,
     conv_state: State<'_, Arc<ConversationState>>,
 ) -> Result<Option<String>, String> {
-    Ok(conv_state.get_error())
+    let error = conv_state.get_error();
+    if error.is_some() && !conv_state.is_active() {
+        tray::stop_recording(&app, RecordingSource::Conversation, None);
+    }
+    Ok(error)
 }
 
 #[tauri::command]

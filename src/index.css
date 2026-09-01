@@ -75,8 +75,8 @@
   --color-warning: hsl(40, 90%, 60%);              /* amber */
   --color-warning-foreground: hsl(226, 49%, 8%);   /* #0B1020 */
 
-  /* Recording — the floating overlay's active/recording state */
-  --color-recording: hsl(312, 100%, 58%);          /* #FF2BD6 */
+  /* Recording — shared violet for the floating overlay and tray indicator */
+  --color-recording: hsl(270, 91%, 65%);           /* #A855F7 */
   --color-recording-foreground: hsl(0, 0%, 100%);  /* #FFFFFF */
 
   /* Borders */

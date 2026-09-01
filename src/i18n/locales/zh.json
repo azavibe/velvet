@@ -52,6 +52,8 @@
 
   "transcription.title": "云服务提供商",
   "transcription.description": "选择云端转录服务",
+  "transcription.contextualCorrection.label": "自动上下文语音纠错",
+  "transcription.contextualCorrection.description": "根据词典和近期听写内容谨慎纠正可能的识别错误。原始文本会保留在历史记录中；所选文本将由你的 AI 提供商处理。",
   "transcription.mode.label": "听写模式",
   "transcription.mode.standard": "标准",
   "transcription.mode.standard.description": "录音完成后开始转录。",
@@ -257,6 +259,9 @@
   "history.loading": "Loading…",
   "history.audioRecoveryFailed": "音频恢复失败",
   "history.emptyTranscript": "(no transcript)",
+  "history.rawAsr": "原始语音识别",
+  "history.contextualCorrection": "上下文纠错",
+  "history.finalText": "最终文本",
   "history.speakerMe": "Me",
   "history.speakerThem": "Them",
   "history.audio.title": "录音归档",

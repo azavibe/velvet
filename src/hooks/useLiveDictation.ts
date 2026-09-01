@@ -657,6 +657,7 @@ export function useLiveDictation({ onToast }: Options = {}) {
             useReasoning: useR, reasoningModel: rModel, reasoningProvider: rProvider,
             enhancementIntensity: intensity, autoPaste, useCustomPrompt: useCustom,
             customSystemPrompt: customPrompt, agentName, agentAliases: aliases,
+            contextualCorrectionEnabled: false,
             debugMode,
           };
           reEnhance = async (text: string) => {

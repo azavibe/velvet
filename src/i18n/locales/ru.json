@@ -54,6 +54,8 @@
 
   "transcription.title": "Облачный провайдер",
   "transcription.description": "Выберите облачный сервис транскрипции",
+  "transcription.contextualCorrection.label": "Автоматическая контекстная коррекция речи",
+  "transcription.contextualCorrection.description": "Осторожно исправляет вероятные ошибки распознавания с помощью словаря и недавних диктовок. Исходный текст сохраняется в истории; выбранный текст обрабатывается вашим ИИ-провайдером.",
   "transcription.mode.label": "Режим",
   "transcription.mode.standard": "Стандартный",
   "transcription.mode.standard.description": "Записывает, затем транскрибирует при остановке.",
@@ -259,6 +261,9 @@
   "history.loading": "Loading…",
   "history.audioRecoveryFailed": "Не удалось восстановить аудио",
   "history.emptyTranscript": "(no transcript)",
+  "history.rawAsr": "Исходное распознавание речи",
+  "history.contextualCorrection": "Контекстная коррекция",
+  "history.finalText": "Итоговый текст",
   "history.speakerMe": "Me",
   "history.speakerThem": "Them",
   "history.audio.title": "Архивное аудио",

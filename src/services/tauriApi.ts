@@ -161,6 +161,10 @@ export interface Transcription {
   timestamp: string;
   original_text: string;
   processed_text: string | null;
+  reconciled_text: string | null;
+  reconciliation_status: string;
+  reconciliation_confidence: number | null;
+  reconciliation_evidence: string | null;
   is_processed: boolean;
   processing_method: string;
   agent_name: string | null;
@@ -179,6 +183,10 @@ export async function saveTranscription(
   error: string | null,
   durationMs: number | null,
   audioData?: number[] | null,
+  reconciledText?: string | null,
+  reconciliationStatus = "disabled",
+  reconciliationConfidence?: number | null,
+  reconciliationEvidence?: string | null,
 ): Promise<number> {
   return invoke("save_transcription", {
     originalText,
@@ -188,6 +196,10 @@ export async function saveTranscription(
     error,
     durationMs,
     audioData: audioData ?? null,
+    reconciledText: reconciledText ?? null,
+    reconciliationStatus,
+    reconciliationConfidence: reconciliationConfidence ?? null,
+    reconciliationEvidence: reconciliationEvidence ?? null,
   });
 }
 

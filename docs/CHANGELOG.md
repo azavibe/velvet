@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-01
+
+### Highlights
+
+- Standard dictation can now conservatively correct likely speech-recognition mistakes using your dictionary and recent dictations.
+- Every accepted correction keeps the original speech-recognition text visible in History.
+- Contextual correction is optional and safely keeps the original text whenever evidence is weak or the AI provider is unavailable.
+- Recording indicators now use visible violet waves, and the tray reliably returns to its normal icon when recording ends.
+
+### Features
+
+- Added an opt-in contextual correction stage between cloud speech recognition and command routing. It uses bounded language, dictionary, configured-agent, and recent-dictation context with a five-second fallback timeout.
+- Added local validation for small, high-confidence, evidence-backed edits. Unsupported rewrites, paraphrases, malformed responses, provider failures, and timeouts preserve the raw transcription.
+- Added separate persistence for raw, reconciled, and final text together with correction status, confidence, and evidence category. Accepted corrections are shown as distinct layers in expanded History cards.
+- Added the setting and explanatory privacy copy in all nine supported interface languages. Live dictation remains unchanged in this release.
+
+### Internal
+
+- Added SQLite migration v7 and round-trip coverage for reconciliation audit fields.
+- Added focused tests for dictionary-backed and recent-context correction, ambiguity, provider failure, prompt bounds, and rewrite rejection.
+
+### Fixes
+
+- Tray updates now run on the Windows UI thread with stale-update protection. Standard, Conversation, and Notes error/stop paths release their tray ownership even when native capture shutdown reports an error.
+- The recording bubble now uses distinct violet idle, recording, and processing surfaces plus a speech-responsive 36px translucent wave around the compact 32px circle.
+
 ## [0.8.10] - 2026-09-01
 
 ### Highlights

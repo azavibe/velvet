@@ -52,6 +52,8 @@
 
   "transcription.title": "Cloud-Anbieter",
   "transcription.description": "Cloud-Transkriptionsdienst auswählen",
+  "transcription.contextualCorrection.label": "Automatische kontextbezogene Sprachkorrektur",
+  "transcription.contextualCorrection.description": "Korrigiert wahrscheinliche Erkennungsfehler vorsichtig anhand deines Wörterbuchs und letzter Diktate. Der Rohtext bleibt im Verlauf; ausgewählter Text wird von deinem KI-Anbieter verarbeitet.",
   "transcription.mode.label": "Modus",
   "transcription.mode.standard": "Standard",
   "transcription.mode.standard.description": "Nimmt auf und transkribiert beim Stoppen.",
@@ -257,6 +259,9 @@
   "history.loading": "Loading…",
   "history.audioRecoveryFailed": "Wiederherstellung der Aufnahmen fehlgeschlagen",
   "history.emptyTranscript": "(no transcript)",
+  "history.rawAsr": "Rohe Spracherkennung",
+  "history.contextualCorrection": "Kontextbezogene Korrektur",
+  "history.finalText": "Endgültiger Text",
   "history.speakerMe": "Me",
   "history.speakerThem": "Them",
   "history.audio.title": "Archivierte Audiodateien",
