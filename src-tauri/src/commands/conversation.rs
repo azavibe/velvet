@@ -22,6 +22,7 @@ use crate::audio::conversation::{
 use crate::audio::recorder::TARGET_SAMPLE_RATE;
 use crate::database::{ConversationDetail, ConversationSummary, Database};
 use crate::reasoning::{self, ReasoningRequest};
+use crate::tray::{self, RecordingSource};
 
 /// Streams each channel's transcribed chunks to its own WAV file on disk as
 /// the conversation runs, rather than buffering the whole session in
@@ -351,6 +352,8 @@ pub async fn start_conversation(
         }
     };
 
+    tray::start_recording(&app, RecordingSource::Conversation);
+
     let app_for_consumer = app.clone();
     let api_key = groq_api_key;
     let (archive_done_tx, archive_done_rx) = mpsc::channel();
@@ -505,6 +508,7 @@ pub fn stop_conversation(
     // spawned in start_conversation, so a `conversation-utterance` event
     // for it can arrive slightly after this command returns.
     ConversationCapture::stop(&**conv_state).str_err()?;
+    tray::stop_recording(&app, RecordingSource::Conversation, None);
     let recordings_root = recordings_dir(&app).str_err()?;
     let archive = app.state::<ConversationAudioArchive>();
     if archive.wait_for_consumer().is_err() {

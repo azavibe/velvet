@@ -5,6 +5,7 @@ mod database;
 pub(crate) mod http;
 mod reasoning;
 pub mod transcription;
+mod tray;
 
 use tauri::Manager;
 use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder};
@@ -167,6 +168,13 @@ pub fn run() {
             // Initialize audio recording state
             app.manage(audio::RecordingState::new());
 
+            let idle_tray_icon = app
+                .default_window_icon()
+                .expect("the application must define a default icon")
+                .clone()
+                .to_owned();
+            app.manage(tray::RecordingIndicator::new(idle_tray_icon));
+
             // Voice commands are queued here before the hidden Conversation
             // WebView is shown. This prevents first-load/listener races from
             // dropping a command between window focus and React mount.
@@ -242,7 +250,7 @@ pub fn run() {
                 .item(&quit)
                 .build()?;
 
-            TrayIconBuilder::new()
+            TrayIconBuilder::with_id(tray::TRAY_ID)
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Aral")
                 .menu(&menu)

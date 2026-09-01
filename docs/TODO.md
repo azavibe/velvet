@@ -4,6 +4,16 @@
 
 Detailed [implementation plan](plans/conversational-assistant.md).
 
+### v0.8.10 — Recording visibility and release correction
+
+- [ ] Show recording state in the system tray when the floating bubble is hidden.
+  - [x] Switch the shared tray icon to magenta for Standard, Live, Conversation, and Notes capture without changing the bubble animation.
+  - [x] Restore the idle icon on stop, failure, or note pause, with stale-session protection for rapid recording restarts.
+  - [ ] Verify all capture modes, note pause/resume, hidden-bubble recording, and rapid stop/start behavior in the packaged Windows tray.
+- [ ] Remove repeated configured-agent wake-word echoes without breaking fuzzy voice commands or legitimate interior mentions.
+  - [x] Sanitize repeated configured-name and alias echoes at utterance boundaries before command routing, enhancement, paste, and Live typing while preserving raw History text.
+  - [ ] Verify repeated leading and trailing wake-name captures in Standard and Live modes on Windows with runtime name changes, fuzzy variants, commands, direct questions, and legitimate interior mentions.
+
 ### v0.8.9 — Repairs and stabilization
 
 - [x] Repair archived-audio persistence so dictation, conversation, and note recordings have explicit saving, ready, missing, or failed states.
@@ -17,7 +27,6 @@ Detailed [implementation plan](plans/conversational-assistant.md).
     - [ ] Verify dictation, Conversation Me/Them, and note playback starts at byte zero and seeks repeatedly through the middle and near EOF in packaged WebView2.
     - [ ] Compare SQLite source/asset counts and rendered source IDs before and after repeated Play, Pause, Seek, Restart, Stop, and Play All; confirm sequential range requests remain read-only.
     - [ ] Measure idle, History-visible, active-playback, and post-stop Windows memory and confirm playback returns close to baseline.
-- [ ] Remove repeated configured-agent wake-word echoes without breaking fuzzy voice commands or legitimate interior mentions.
 - [ ] Diagnose startup lag and ensure archive recovery does not block the interface unnecessarily.
   - [x] Add development-only timing marks for initialization, migrations, archive recovery, WebView/React startup, shortcut registration, and the first History/Notes query.
   - [x] Manage the database before the one-time WAV recovery pass and refresh History after explicit recovery completion or failure.

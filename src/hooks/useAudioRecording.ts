@@ -23,6 +23,7 @@ import {
   formatOutput,
 } from "./useTranscriptionPipeline";
 import { applyAlwaysDictionaryCorrections } from "@/models/dictionary";
+import { sanitizeAgentWakeEcho } from "@/services/agentEchoSanitizer";
 
 /** The backend owns prompt-echo suppression; preserve non-empty dictionary terms
  * because they may be exactly what the user spoke. */
@@ -181,13 +182,26 @@ export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecording
         return;
       }
 
+      const commandText = sanitizeAgentWakeEcho(
+        providerText,
+        settings.agentName,
+        settings.agentAliases,
+      );
+      const agentEchoRemoved = commandText !== providerText;
+      if (agentEchoRemoved && (import.meta.env.DEV || settings.debugMode)) {
+        console.debug("[Whisperi] code=agent_wake_echo_removed", {
+          beforeCharacters: providerText.length,
+          afterCharacters: commandText.length,
+        });
+      }
+
       // "Aral, start notes" is an instruction to the app, not text to type.
       // Detect against provider-normalized text before arbitrary user
       // dictionary replacements. Command-scoped ASR tolerance belongs in the
       // recognizer; a custom nodes→notes rule must not gain permission to
       // launch UI actions. Bails before enhancement, paste, and history.
       if (onVoiceCommandRef.current) {
-        const handled = await onVoiceCommandRef.current(providerText, {
+        const handled = await onVoiceCommandRef.current(commandText, {
           agentName: settings.agentName,
           agentAliases: settings.agentAliases,
           retryTranscription: (prompt) => retryCommandTranscription(audioData, settings, prompt),
@@ -202,7 +216,7 @@ export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecording
       }
 
       const correctedText = applyAlwaysDictionaryCorrections(
-        providerText,
+        commandText,
         settings.dictionary,
       );
 
@@ -240,9 +254,11 @@ export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecording
         finalText !== providerText ? finalText : null,
         rawAiResponse !== null
           ? "ai"
-          : finalText !== providerText
-            ? "dictionary"
-            : "none",
+          : agentEchoRemoved
+            ? "agent-echo"
+            : finalText !== providerText
+              ? "dictionary"
+              : "none",
         settings.agentName,
         null,
         durationMs,

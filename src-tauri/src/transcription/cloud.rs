@@ -502,7 +502,7 @@ pub async fn transcribe_openrouter(
     let response = crate::http::HTTP_CLIENT
         .post("https://openrouter.ai/api/v1/chat/completions")
         .bearer_auth(api_key)
-        .header("HTTP-Referer", "https://github.com/azavibe/velvet")
+        .header("HTTP-Referer", "https://github.com/azavibe/agenda")
         .header("X-Title", "Aral")
         .json(&request)
         .send()

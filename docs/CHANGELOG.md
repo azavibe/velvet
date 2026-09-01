@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+## [0.8.10] - 2026-09-01
+
+### Highlights
+
+- The tray icon turns magenta while any recording is active, so recording remains visible when the floating bubble is hidden.
+- Repeated wake names are removed from typed text without changing legitimate mentions or voice commands.
+- Release and update metadata now consistently reports the installed application version and uses the correct GitHub repository.
+
+### Fixes
+
+- Repeated configured-agent names at the start or end of a transcription are now collapsed conservatively before command routing or typing, while the raw ASR result remains available in History and ordinary interior name mentions remain unchanged.
+- The system-tray icon now switches to the app's magenta recording color for Standard, Live, Conversation, and Notes capture, including while the floating bubble is hidden. Pausing a note restores the idle icon until capture resumes.
+- Frontend, Tauri, Cargo, lockfile, changelog, updater, release workflow, and provider attribution metadata now agree on the release identity and repository. CI checks their version agreement to prevent another mislabeled installer.
+
+## [0.8.9] - 2026-08-24
+
+### Highlights
+
+- History audio is safer and easier to revisit, with reliable recording files, playback controls, and ordered note segments.
+- Voice commands and configured agent names are recognized more reliably without pasting consumed commands into typed text.
+- The global hotkey and compact floating microphone are more stable across long sessions and window changes.
+
+### Fixes
+
+- Archived recordings now have durable saving, ready, missing, and failed states. WAV files are finalized before they become playable, note append segments retain their order, and validated deletion removes every recording owned by a History source.
+- History playback uses one lazy global HTML audio element and an ID-backed, range-capable Tauri protocol. Bounded media responses avoid loading whole recordings into memory, and malformed or oversized range requests no longer panic the protocol thread.
+- Global-shortcut registration now has stable ownership across React renders and window changes, with shared click/hotkey recording transitions and visible registration failures.
+- Voice-command dispatch now creates a durable pending intent before showing a target window and waits for acknowledgement after the target is ready. The resolver reads the current configured agent name and aliases, runs before enhancement or dictionary replacement, and performs at most one command-focused retry for plausible short commands.
+- The floating microphone keeps an invisible 44×44 accessible target around one visible 32×32 circle. Recording effects are centered and clipped inside it, processing uses a compact horizontal pulse, and reduced-motion mode disables animation.
+
 ## [0.8.8] - 2026-08-16
 
 ### Highlights
@@ -27,11 +57,6 @@
 
 ### Fixes
 
-- Archived recordings now have durable saving, ready, missing, and failed states. WAV files are finalized before they become playable, note append segments retain their order, and validated deletion removes every recording owned by a History source.
-- History playback uses one lazy global HTML audio element and an ID-backed, range-capable Tauri protocol. Bounded media responses avoid loading whole recordings into memory, and malformed or oversized range requests no longer panic the protocol thread.
-- Global-shortcut registration now has stable ownership across React renders and window changes, with shared click/hotkey recording transitions and visible registration failures.
-- Voice-command dispatch now creates a durable pending intent before showing a target window and waits for acknowledgement after the target is ready. The resolver reads the current configured agent name and aliases, runs before enhancement or dictionary replacement, and performs at most one command-focused retry for plausible short commands.
-- The floating microphone keeps an invisible 44×44 accessible target around one visible 32×32 circle. Recording effects are centered and clipped inside it, processing uses a compact horizontal pulse, and reduced-motion mode disables animation.
 - The Conversation window's capability wasn't registered for that window, so it silently had no permission to drag-move, minimize, close, or receive any live event — it could only resize, and would sit on "Listening…" forever even though transcription was running, because the events carrying transcript/suggestions/errors never reached it. The window can now be moved, minimized, and closed normally, and transcript/suggestions arrive live
 - Fixed transcription and notes appearing to stop after the first sentence or two even while still talking: the live-event listeners were re-registered on every incoming utterance (because the toast callback passed in had a new identity each render), and an event landing during that async re-registration gap was silently dropped. Listener wiring is now stable across renders regardless of what the caller passes for `onToast`
 - Added a pin toggle to the Conversation window's titlebar to drop always-on-top once it's positioned where you want it, without closing it
