@@ -29,6 +29,9 @@ export interface Settings {
   secondaryLanguage: string;
   cloudTranscriptionProvider: string;
   cloudTranscriptionModel: string;
+  /** Installed whisper.cpp model used for Local and cloud fallback. */
+  localTranscriptionModel: string;
+  localFallbackEnabled: boolean;
   customDictionary: DictionaryEntry[];
 
   // Reasoning
@@ -116,6 +119,8 @@ const DEFAULTS: Settings = {
   secondaryLanguage: "",
   cloudTranscriptionProvider: "openai",
   cloudTranscriptionModel: "gpt-4o-mini-transcribe",
+  localTranscriptionModel: "",
+  localFallbackEnabled: true,
   customDictionary: [],
   useReasoningModel: true,
   reasoningModel: "gpt-5-mini",
@@ -158,6 +163,7 @@ const DEFAULTS: Settings = {
 const STORE_KEYS = [
   "preferredLanguage", "languageMode", "secondaryLanguage",
   "cloudTranscriptionProvider", "cloudTranscriptionModel",
+  "localTranscriptionModel", "localFallbackEnabled",
   "dictationMode", "liveTranscriptionProvider", "liveTranscriptionModel", "liveEnhancement", "liveLastError",
   "useReasoningModel", "reasoningModel", "reasoningProvider", "enhancementIntensity",
   "useCustomPrompt", "customSystemPrompt",

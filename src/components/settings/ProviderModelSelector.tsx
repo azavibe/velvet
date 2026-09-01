@@ -6,6 +6,7 @@ import { SettingsRow } from "@/components/ui/SettingsSection";
 import { ProviderTabs, type ProviderTabItem } from "@/components/ui/ProviderTabs";
 import type { Settings } from "@/hooks/useSettings";
 import { getApiKey, getApiKeyField } from "./providerHelpers";
+import LocalModelManager from "./LocalModelManager";
 
 interface ProviderModelSelectorProps {
   providers: ProviderTabItem[];
@@ -14,7 +15,7 @@ interface ProviderModelSelectorProps {
   registryKey: "transcriptionProviders" | "cloudProviders";
   openRouterDefault: string;
   onProviderChange: (id: string) => void;
-  onModelChange: (model: string) => void;
+  onModelChange: (model: string, providerId?: string) => void;
   settings: Settings;
   update: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
 }
@@ -41,18 +42,20 @@ export default function ProviderModelSelector({
         onSelect={(id) => {
           onProviderChange(id);
           if (id === "openrouter") {
-            onModelChange(openRouterDefault);
+            onModelChange(openRouterDefault, id);
           } else {
             const provider = registry.find((p) => p.id === id);
             if (provider?.models[0]) {
-              onModelChange(provider.models[0].id);
+              onModelChange(provider.models[0].id, id);
             }
           }
         }}
       />
       <div className="space-y-3">
         <SettingsRow label={t("providerModel.model")}>
-          {selectedProvider === "openrouter" ? (
+          {selectedProvider === "local" ? (
+            <LocalModelManager selectedModel={selectedModel} onModelChange={onModelChange} />
+          ) : selectedProvider === "openrouter" ? (
             <input
               type="text"
               value={selectedModel}
@@ -99,12 +102,14 @@ export default function ProviderModelSelector({
             <p className="text-xs text-muted-foreground -mt-1 text-right">{selectedModelData.description}</p>
           ) : null;
         })()}
-        <ApiKeyInput
-          apiKey={getApiKey(settings, selectedProvider)}
-          setApiKey={(key) => update(getApiKeyField(selectedProvider), key)}
-          label={t("providerModel.apiKeyLabel", { provider: selectedProvider })}
-          helpText={t("providerModel.apiKeyHelp", { provider: selectedProvider })}
-        />
+        {selectedProvider !== "local" && (
+          <ApiKeyInput
+            apiKey={getApiKey(settings, selectedProvider)}
+            setApiKey={(key) => update(getApiKeyField(selectedProvider), key)}
+            label={t("providerModel.apiKeyLabel", { provider: selectedProvider })}
+            helpText={t("providerModel.apiKeyHelp", { provider: selectedProvider })}
+          />
+        )}
       </div>
     </>
   );

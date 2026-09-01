@@ -1,5 +1,6 @@
 import {
   transcribeCloud,
+  transcribeLocal,
   transcribeCommandRetry,
   processReasoning,
   getApiKey,
@@ -33,6 +34,8 @@ import {
 export interface TranscriptionSettings {
   cloudProvider: string | null;
   cloudModel: string | null;
+  localModel: string | null;
+  localFallbackEnabled: boolean | null;
   language: string | null;
   languageMode: "auto" | "single" | "bilingual" | null;
   secondaryLanguage: string | null;
@@ -57,6 +60,8 @@ export async function loadTranscriptionSettings(): Promise<TranscriptionSettings
   const [
     cloudProvider,
     cloudModel,
+    localModel,
+    localFallbackEnabled,
     language,
     languageMode,
     secondaryLanguage,
@@ -77,6 +82,8 @@ export async function loadTranscriptionSettings(): Promise<TranscriptionSettings
   ] = await Promise.all([
     getSetting<string>("cloudTranscriptionProvider"),
     getSetting<string>("cloudTranscriptionModel"),
+    getSetting<string>("localTranscriptionModel"),
+    getSetting<boolean>("localFallbackEnabled"),
     getSetting<string>("preferredLanguage"),
     getSetting<"auto" | "single" | "bilingual">("languageMode"),
     getSetting<string>("secondaryLanguage"),
@@ -99,6 +106,8 @@ export async function loadTranscriptionSettings(): Promise<TranscriptionSettings
   return {
     cloudProvider,
     cloudModel,
+    localModel,
+    localFallbackEnabled: localFallbackEnabled ?? true,
     language,
     languageMode,
     secondaryLanguage,
@@ -144,6 +153,7 @@ export interface TranscribeResult {
   /** Language code the backend reported during auto-detect. `null` when the user
    *  forced a language or the provider doesn't expose detection. */
   detectedLanguage: string | null;
+  engine: "cloud" | "local" | "fallback:local";
 }
 
 /** The language to request from the engine and enhancement, honoring
@@ -177,26 +187,47 @@ export async function transcribe(
       ? settings.secondaryLanguage ?? undefined
       : undefined;
 
-  const provider = settings.cloudProvider ?? "openai";
-  const apiKey = await getApiKey(provider);
-  if (!apiKey) {
-    throw new Error(
-      `No API key configured for ${provider}. Set it in Settings.`,
+  const runLocal = async (engine: "local" | "fallback:local"): Promise<TranscribeResult> => {
+    if (!settings.localModel) throw new Error("No local transcription model is installed and selected.");
+    const result = await transcribeLocal(
+      audioData,
+      settings.localModel,
+      requestedLanguage(settings),
+      secondaryLanguage,
+      transcriptionDict,
+      protectedTerms,
     );
+    return { text: result.text, detectedLanguage: result.detected_language, engine };
+  };
+
+  const provider = settings.cloudProvider ?? "openai";
+  if (provider === "local") return runLocal("local");
+
+  try {
+    const apiKey = await getApiKey(provider);
+    if (!apiKey) {
+      throw new Error(`No API key configured for ${provider}. Set it in Settings.`);
+    }
+    const model = settings.cloudModel ?? "gpt-4o-mini-transcribe";
+    console.log(`[Whisperi] Transcribing with ${provider}/${model}...`);
+    const result = await transcribeCloud(
+      audioData,
+      provider,
+      apiKey,
+      model,
+      requestedLanguage(settings),
+      secondaryLanguage,
+      transcriptionDict,
+      protectedTerms,
+    );
+    return { text: result.text, detectedLanguage: result.detected_language, engine: "cloud" };
+  } catch (cloudError) {
+    if (settings.localFallbackEnabled && settings.localModel) {
+      console.warn("[Whisperi] Cloud transcription failed; using local fallback.", cloudError);
+      return runLocal("fallback:local");
+    }
+    throw cloudError;
   }
-  const model = settings.cloudModel ?? "gpt-4o-mini-transcribe";
-  console.log(`[Whisperi] Transcribing with ${provider}/${model}...`);
-  const result = await transcribeCloud(
-    audioData,
-    provider,
-    apiKey,
-    model,
-    requestedLanguage(settings),
-    secondaryLanguage,
-    transcriptionDict,
-    protectedTerms,
-  );
-  return { text: result.text, detectedLanguage: result.detected_language };
 }
 
 /** Reuse the original recording for the resolver's single bounded ASR retry. */
@@ -206,6 +237,10 @@ export async function retryCommandTranscription(
   prompt: string,
 ): Promise<string | null> {
   const provider = settings.cloudProvider ?? "openai";
+  // The command-specific second ASR pass is intentionally cloud-only in
+  // v0.11. Local primary dictation still resolves exact/fuzzy commands from
+  // its first transcript; it simply skips this optional bounded retry.
+  if (provider === "local") return null;
   const apiKey = await getApiKey(provider);
   if (!apiKey) return null;
   const result = await transcribeCommandRetry(

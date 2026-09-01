@@ -89,6 +89,15 @@ Detailed [implementation plan](plans/conversational-assistant.md).
 - [x] Add an automatic-memory toggle and reset action without introducing a graph editor or training interface.
 - [ ] Extend memory extraction to Live dictation only after a safe completed-utterance source model is designed.
 
+### v0.11.0 — Local transcription and fallback
+
+- [x] Preserve failed and empty Standard-dictation recordings, exclude failures from analytics, and support retrying them from History.
+- [x] Add Local as a peer transcription provider with resumable, cancellable, SHA-256-verified GGML model downloads and deletion.
+- [x] Run CPU-only local inference through linked `whisper-rs`, reuse loaded models, and retain language/dictionary prompting.
+- [x] Fall back to the selected local model on cloud errors or missing keys, while leaving empty results, Live, Conversations, and Notes unchanged.
+- [x] Show local/fallback provenance in History and allow any archived dictation to be re-transcribed locally in place.
+- [ ] Add an optional queued batch action for multiple failed recordings after single-item retry has production usage.
+
 ### Deferred — Direct conversation and text-to-speech
 
 - [ ] Route non-command speech addressed to the configured agent into persistent direct conversation turns.

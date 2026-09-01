@@ -171,11 +171,26 @@ export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecording
         settings.agentAliases,
       );
 
-      const { text: providerText, detectedLanguage } = await transcribe(
-        audioData,
-        settings,
-        transcriptionDict,
-      );
+      let providerText: string;
+      let detectedLanguage: string | null;
+      let transcriptionEngine: "cloud" | "local" | "fallback:local";
+      try {
+        const result = await transcribe(audioData, settings, transcriptionDict);
+        providerText = result.text;
+        detectedLanguage = result.detectedLanguage;
+        transcriptionEngine = result.engine;
+      } catch (e) {
+        await saveTranscription(
+          "",
+          null,
+          "failed",
+          settings.agentName,
+          "transcription_failed",
+          durationMs,
+          audioData,
+        );
+        throw e;
+      }
       if (import.meta.env.DEV || settings.debugMode) {
         console.debug("[Whisperi] transcription received", {
           characters: providerText.length,
@@ -184,9 +199,16 @@ export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecording
       }
 
       if (isEmptyTranscription(providerText)) {
-        console.log(
-          "[Whisperi] Empty transcription, skipping.",
+        await saveTranscription(
+          "",
+          null,
+          "failed",
+          settings.agentName,
+          "empty_transcription",
+          durationMs,
+          audioData,
         );
+        console.log("[Whisperi] Empty transcription archived for retry.");
         setPhase("idle");
         return;
       }
@@ -273,6 +295,7 @@ export function useAudioRecording({ onToast, onVoiceCommand }: UseAudioRecording
       }
 
       const processingMethods = [
+        transcriptionEngine,
         reconciliation.status === "accepted" ? "reconciliation" : null,
         agentEchoRemoved ? "agent-echo" : null,
         rawAiResponse !== null ? "ai" : null,

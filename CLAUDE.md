@@ -15,6 +15,12 @@ cd src-tauri && cargo test   # Rust tests
 cd src-tauri && cargo clippy # lint
 ```
 
+The `bun run tauri ...` launcher discovers CMake and LLVM/libclang in their
+standard Windows install locations and exports them for `whisper-rs`. On a new
+Windows development machine, install missing prerequisites with
+`winget install --id Kitware.CMake --exact` and
+`winget install --id LLVM.LLVM --exact`.
+
 ## Architecture
 
 **Backend** (Rust, `src-tauri/src/`): `audio/` `transcription/` `reasoning/` `clipboard/` `database/` `commands/`
@@ -26,7 +32,7 @@ cd src-tauri && cargo clippy # lint
 - **cpal Stream is !Send** — recording runs on dedicated thread, state shared via `Arc<Mutex<>>` + `AtomicBool`
 - **Dual window** — 100x100 transparent overlay (always-on-top) + 760x800 settings (hidden by default)
 - **Dark mode only** — Nord color palette, Geist font
-- **Cloud-only models** — on-device transcription/reasoning models and executable sidecars are not allowed
+- **Local transcription is supported** — Standard dictation may use the linked CPU-only `whisper-rs` engine and downloaded GGML models; reasoning, Live, Conversations, and Notes remain cloud-only, and executable model sidecars are not allowed
 - **System tray** — built programmatically in `lib.rs` (no `trayIcon` in tauri.conf.json)
 - **i18n** — all UI strings in `src/i18n/locales/*.json`, typed via `i18next.d.ts`; add new keys to `en.json` first, then all 8 other locales; cross-window sync via `settings-changed` event
 - **Package manager** — bun (not npm/yarn)

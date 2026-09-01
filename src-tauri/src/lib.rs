@@ -198,6 +198,10 @@ pub fn run() {
                 audio::note_capture::NoteCaptureState::new(),
             ));
             app.manage(crate::commands::notes::NoteAudioArchive::default());
+            app.manage(crate::commands::local_models::LocalModelDownloadState::default());
+            app.manage(std::sync::Arc::new(
+                crate::transcription::local::LocalTranscriptionState::default(),
+            ));
 
             // Initialize live dictation session state. Wrap in Arc so the
             // audio-pump task spawned in start_live_session can clone a handle
@@ -295,6 +299,9 @@ pub fn run() {
             commands::audio::stop_recording,
             commands::audio::get_audio_level,
             commands::transcription::transcribe_cloud,
+            commands::transcription::transcribe_local,
+            commands::transcription::retranscribe_local,
+            commands::transcription::retry_failed_transcription,
             commands::transcription::transcribe_command_retry,
             commands::reasoning::process_reasoning,
             commands::settings::get_setting,
@@ -311,6 +318,10 @@ pub fn run() {
             commands::database::store_memory_candidates,
             commands::database::get_memory_context,
             commands::database::reset_memory,
+            commands::local_models::list_local_models,
+            commands::local_models::download_local_model,
+            commands::local_models::cancel_local_model_download,
+            commands::local_models::delete_local_model,
             commands::playback::get_audio_asset_url,
             commands::app::quit_app,
             commands::app::show_settings,
