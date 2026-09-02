@@ -14,7 +14,7 @@ pub async fn process_reasoning(
 ) -> Result<String, String> {
     // Never log any part of the API key (see transcribe_cloud). Presence only.
     log::info!(
-        "[Whisperi] Enhancing: provider={}, model={}, has_key={}",
+        "[Agenda] Enhancing: provider={}, model={}, has_key={}",
         provider,
         model,
         !api_key.is_empty()
@@ -33,7 +33,7 @@ pub async fn process_reasoning(
     match reasoning::process(&req).await {
         Ok(response) => {
             log::info!(
-                "[Whisperi] Enhancement complete ({} chars)",
+                "[Agenda] Enhancement complete ({} chars)",
                 response.text.len()
             );
             // Run the full Chinese post-processing pipeline (punctuation + T→S
@@ -46,7 +46,7 @@ pub async fn process_reasoning(
             ))
         }
         Err(e) => {
-            log::error!("[Whisperi] Enhancement failed: {}", e);
+            log::error!("[Agenda] Enhancement failed: {}", e);
             Err(e.to_string())
         }
     }

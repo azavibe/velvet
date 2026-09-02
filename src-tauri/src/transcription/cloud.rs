@@ -67,7 +67,7 @@ pub fn strip_prompt_echo(text: &str, prompt: Option<&str>, protected_terms: &[St
         .any(|term| tokenize(term) == text_tokens);
     if is_dictionary_echo(trimmed, p) && !exactly_protected {
         log::warn!(
-            "[Whisperi] Stripped dictionary echo (silence): \"{}\"",
+            "[Agenda] Stripped dictionary echo (silence): \"{}\"",
             trimmed
         );
         return String::new();
@@ -107,7 +107,7 @@ pub fn strip_prompt_echo(text: &str, prompt: Option<&str>, protected_terms: &[St
         let stripped = trimmed[byte_offset..].trim();
         if !stripped.is_empty() {
             log::info!(
-                "[Whisperi] Stripped prompt echo prefix: \"{}\"",
+                "[Agenda] Stripped prompt echo prefix: \"{}\"",
                 trimmed[..byte_offset].trim()
             );
             return stripped.to_string();
@@ -193,7 +193,7 @@ pub fn strip_dictionary_edge_echo(
         return trimmed.to_string();
     }
     log::info!(
-        "[Whisperi] Stripped dictionary edge echo (leading: \"{}\", trailing: \"{}\")",
+        "[Agenda] Stripped dictionary edge echo (leading: \"{}\", trailing: \"{}\")",
         trimmed[..begin].trim(),
         trimmed[finish..].trim()
     );
@@ -205,25 +205,25 @@ pub fn log_transcription_result(provider: &str, text: &str, prompt: Option<&str>
     let trimmed = text.trim();
     if trimmed.is_empty() {
         log::warn!(
-            "[Whisperi] {} transcription: empty (no voice detected)",
+            "[Agenda] {} transcription: empty (no voice detected)",
             provider
         );
     } else if let Some(p) = prompt {
         if !p.is_empty() && is_dictionary_echo(trimmed, p) {
             log::warn!(
-                "[Whisperi] {} transcription matched its prompt vocabulary (possible silence)",
+                "[Agenda] {} transcription matched its prompt vocabulary (possible silence)",
                 provider
             );
         } else {
             log::info!(
-                "[Whisperi] {} transcription complete ({} chars)",
+                "[Agenda] {} transcription complete ({} chars)",
                 provider,
                 trimmed.len()
             );
         }
     } else {
         log::info!(
-            "[Whisperi] {} transcription complete ({} chars)",
+            "[Agenda] {} transcription complete ({} chars)",
             provider,
             trimmed.len()
         );
@@ -281,7 +281,7 @@ pub async fn transcribe_openai(
         form = form.text("temperature", value.to_string());
     }
 
-    log::info!("[Whisperi] POST {}", url);
+    log::info!("[Agenda] POST {}", url);
     let response = crate::http::HTTP_CLIENT
         .post(&url)
         .bearer_auth(api_key)
@@ -294,7 +294,7 @@ pub async fn transcribe_openai(
     let result: TranscriptionResponse = response.json().await?;
     log_transcription_result("Cloud", &result.text, prompt);
     if let Some(ref code) = result.language {
-        log::info!("[Whisperi] Cloud detected language: {}", code);
+        log::info!("[Agenda] Cloud detected language: {}", code);
     }
     Ok(CloudTranscription {
         text: result.text,
@@ -410,7 +410,7 @@ pub async fn transcribe_qwen(
     };
 
     log::info!(
-        "[Whisperi] POST https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
+        "[Agenda] POST https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
     );
     let response = crate::http::HTTP_CLIENT
         .post("https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions")
@@ -458,7 +458,7 @@ pub async fn transcribe_openrouter(
     temperature: Option<f32>,
 ) -> Result<CloudTranscription> {
     log::info!(
-        "[Whisperi] OpenRouter transcription: model={}, audio={} bytes ({:.1} KB base64)",
+        "[Agenda] OpenRouter transcription: model={}, audio={} bytes ({:.1} KB base64)",
         model,
         audio_data.len(),
         audio_data.len() as f64 * 4.0 / 3.0 / 1024.0
@@ -498,12 +498,12 @@ pub async fn transcribe_openrouter(
         temperature,
     };
 
-    log::info!("[Whisperi] POST https://openrouter.ai/api/v1/chat/completions (transcription)");
+    log::info!("[Agenda] POST https://openrouter.ai/api/v1/chat/completions (transcription)");
     let response = crate::http::HTTP_CLIENT
         .post("https://openrouter.ai/api/v1/chat/completions")
         .bearer_auth(api_key)
         .header("HTTP-Referer", "https://github.com/azavibe/agenda")
-        .header("X-Title", "Aral")
+        .header("X-Title", "Agenda")
         .json(&request)
         .send()
         .await?;

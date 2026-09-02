@@ -125,9 +125,9 @@ fn update_icon<R: Runtime>(app: &AppHandle<R>) {
                 log::warn!("Failed to update tray recording indicator: {error}");
             }
             let tooltip = if recording {
-                "Aral — Recording"
+                "Agenda — Recording"
             } else {
-                "Aral"
+                "Agenda"
             };
             if let Err(error) = tray.set_tooltip(Some(tooltip)) {
                 log::warn!("Failed to update tray recording tooltip: {error}");

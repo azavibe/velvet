@@ -849,6 +849,48 @@ impl Database {
         Ok(transcriptions)
     }
 
+    pub fn complete_transcription_retry(
+        &self,
+        id: i64,
+        original_text: &str,
+        provider: &str,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            !original_text.trim().is_empty(),
+            "empty retry transcription"
+        );
+        let word_count = word_count::count_words(original_text);
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE transcriptions
+             SET original_text = ?2, processed_text = NULL, is_processed = 0,
+                 processing_method = ?3, error = NULL, word_count = ?4,
+                 reconciled_text = NULL, reconciliation_status = 'disabled',
+                 reconciliation_confidence = NULL, reconciliation_evidence = NULL
+             WHERE id = ?1 AND error IS NOT NULL",
+            rusqlite::params![id, original_text, format!("retry:{provider}"), word_count],
+        )?;
+        anyhow::ensure!(changed == 1, "transcription is not retryable");
+        Ok(())
+    }
+
+    pub fn replace_transcription(&self, id: i64, original_text: &str, method: &str) -> Result<()> {
+        anyhow::ensure!(!original_text.trim().is_empty(), "empty transcription");
+        let word_count = word_count::count_words(original_text);
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE transcriptions
+             SET original_text = ?2, processed_text = NULL, is_processed = 0,
+                 processing_method = ?3, error = NULL, word_count = ?4,
+                 reconciled_text = NULL, reconciliation_status = 'disabled',
+                 reconciliation_confidence = NULL, reconciliation_evidence = NULL
+             WHERE id = ?1",
+            rusqlite::params![id, original_text, method, word_count],
+        )?;
+        anyhow::ensure!(changed == 1, "transcription not found");
+        Ok(())
+    }
+
     pub fn store_memory_candidates(
         &self,
         source_type: &str,
@@ -1258,7 +1300,7 @@ impl Database {
                             COALESCE(SUM(word_count), 0),
                             COUNT(*)
                      FROM transcriptions
-                     WHERE duration_ms IS NOT NULL
+                     WHERE duration_ms IS NOT NULL AND error IS NULL
                        AND timestamp >= datetime('now', 'localtime', 'start of day', 'utc')",
                     [],
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
@@ -1268,7 +1310,7 @@ impl Database {
                             COALESCE(SUM(word_count), 0),
                             COUNT(*)
                      FROM transcriptions
-                     WHERE duration_ms IS NOT NULL
+                     WHERE duration_ms IS NOT NULL AND error IS NULL
                        AND timestamp >= datetime('now', '-7 days')",
                     [],
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
@@ -1278,7 +1320,7 @@ impl Database {
                             COALESCE(SUM(word_count), 0),
                             COUNT(*)
                      FROM transcriptions
-                     WHERE duration_ms IS NOT NULL",
+                     WHERE duration_ms IS NOT NULL AND error IS NULL",
                     [],
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )?,
@@ -1835,6 +1877,38 @@ mod tests {
         assert_eq!(item.reconciliation_evidence.as_deref(), Some("recent"));
     }
 
+    #[test]
+    fn failed_transcription_retry_updates_the_existing_row() {
+        let db = Database::new_in_memory().unwrap();
+        let id = db
+            .save_transcription(
+                "",
+                None,
+                "failed",
+                None,
+                Some("transcription_failed"),
+                Some(2200),
+            )
+            .unwrap();
+
+        db.complete_transcription_retry(id, "Recovered words", "groq")
+            .unwrap();
+        let item = db
+            .get_transcriptions(10, 0)
+            .unwrap()
+            .into_iter()
+            .find(|item| item.id == id)
+            .unwrap();
+        assert_eq!(item.original_text, "Recovered words");
+        assert_eq!(item.error, None);
+        assert_eq!(item.processing_method, "retry:groq");
+        assert_eq!(item.word_count, Some(2));
+        assert!(
+            db.complete_transcription_retry(id, "again", "groq")
+                .is_err()
+        );
+    }
+
     fn acme_memory(object: &str) -> MemoryCandidate {
         MemoryCandidate {
             kind: "fact".into(),
@@ -1957,6 +2031,27 @@ mod tests {
         assert_eq!(s.total_words, 8);
         assert!((s.avg_seconds - 3.0).abs() < 1e-9);
         assert!((s.avg_words - 4.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn get_stats_excludes_failed_recordings_with_audio_duration() {
+        let db = Database::new_in_memory().unwrap();
+        db.save_transcription("successful words", None, "none", None, None, Some(2000))
+            .unwrap();
+        db.save_transcription(
+            "",
+            None,
+            "failed",
+            None,
+            Some("transcription_failed"),
+            Some(9000),
+        )
+        .unwrap();
+
+        let stats = db.get_stats(StatsPeriod::All).unwrap();
+        assert_eq!(stats.total_recordings, 1);
+        assert_eq!(stats.total_seconds, 2);
+        assert_eq!(stats.total_words, 2);
     }
 
     #[test]

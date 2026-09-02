@@ -112,6 +112,10 @@ fn override_min_window_size(window: &tauri::WebviewWindow, logical_w: i32, logic
 pub fn run() {
     // Force ANSI colors even when stdout is piped (bun → cargo → app).
     colored::control::set_override(true);
+    // whisper.cpp writes verbose decoder diagnostics directly to stderr by
+    // default. With whisper-rs' no-backend hook these are intentionally
+    // discarded; application errors still flow through our own Result/logs.
+    whisper_rs::install_logging_hooks();
 
     tauri::Builder::default()
         .register_asynchronous_uri_scheme_protocol("recording", |ctx, request, responder| {
@@ -198,6 +202,10 @@ pub fn run() {
                 audio::note_capture::NoteCaptureState::new(),
             ));
             app.manage(crate::commands::notes::NoteAudioArchive::default());
+            app.manage(crate::commands::local_models::LocalModelDownloadState::default());
+            app.manage(std::sync::Arc::new(
+                crate::transcription::local::LocalTranscriptionState,
+            ));
 
             // Initialize live dictation session state. Wrap in Arc so the
             // audio-pump task spawned in start_live_session can clone a handle
@@ -252,7 +260,7 @@ pub fn run() {
 
             TrayIconBuilder::with_id(tray::TRAY_ID)
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("Aral")
+                .tooltip("Agenda")
                 .menu(&menu)
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "show" => {
@@ -295,6 +303,9 @@ pub fn run() {
             commands::audio::stop_recording,
             commands::audio::get_audio_level,
             commands::transcription::transcribe_cloud,
+            commands::transcription::transcribe_local,
+            commands::transcription::retranscribe_local,
+            commands::transcription::retry_failed_transcription,
             commands::transcription::transcribe_command_retry,
             commands::reasoning::process_reasoning,
             commands::settings::get_setting,
@@ -311,6 +322,10 @@ pub fn run() {
             commands::database::store_memory_candidates,
             commands::database::get_memory_context,
             commands::database::reset_memory,
+            commands::local_models::list_local_models,
+            commands::local_models::download_local_model,
+            commands::local_models::cancel_local_model_download,
+            commands::local_models::delete_local_model,
             commands::playback::get_audio_asset_url,
             commands::app::quit_app,
             commands::app::show_settings,
@@ -352,7 +367,7 @@ pub fn run() {
             commands::notes::cleanup_note,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building whisperi")
+        .expect("error while building Agenda")
         .run(|app_handle, event| {
             // On quit (tray "Quit", the quit_app command, or any exit request),
             // flush an active Live session before the process exits: signal

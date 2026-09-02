@@ -82,6 +82,110 @@ export async function transcribeCloud(
   });
 }
 
+export async function transcribeLocal(
+  audioData: number[],
+  model: string,
+  language?: string,
+  secondaryLanguage?: string,
+  dictionary?: string[],
+  protectedTerms?: string[],
+): Promise<TranscriptionResult> {
+  return invoke("transcribe_local", {
+    audioData,
+    model,
+    language,
+    secondaryLanguage,
+    dictionary: dictionary ?? [],
+    protectedTerms: protectedTerms ?? [],
+  });
+}
+
+export interface LocalModelInfo {
+  id: string;
+  name: string;
+  size_bytes: number;
+  downloaded_bytes: number;
+  quantization: string;
+  english_only: boolean;
+  installed: boolean;
+  downloading: boolean;
+}
+
+export interface LocalModelDownloadProgress {
+  model_id: string;
+  downloaded_bytes: number;
+  total_bytes: number;
+  status: "downloading" | "installed" | "deleted";
+}
+
+export async function listLocalModels(): Promise<LocalModelInfo[]> {
+  return invoke("list_local_models");
+}
+
+export async function downloadLocalModel(modelId: string): Promise<void> {
+  return invoke("download_local_model", { modelId });
+}
+
+export async function cancelLocalModelDownload(modelId: string): Promise<void> {
+  return invoke("cancel_local_model_download", { modelId });
+}
+
+export async function deleteLocalModel(modelId: string): Promise<void> {
+  return invoke("delete_local_model", { modelId });
+}
+
+export async function onLocalModelDownloadProgress(
+  callback: (progress: LocalModelDownloadProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<LocalModelDownloadProgress>("local-model-download-progress", (event) =>
+    callback(event.payload),
+  );
+}
+
+export async function retryFailedTranscription(args: {
+  transcriptionId: number;
+  audioAssetId: number;
+  provider: string;
+  apiKey: string;
+  model: string;
+  language?: string;
+  secondaryLanguage?: string;
+  dictionary?: string[];
+  protectedTerms?: string[];
+}): Promise<TranscriptionResult> {
+  return invoke("retry_failed_transcription", {
+    transcriptionId: args.transcriptionId,
+    audioAssetId: args.audioAssetId,
+    provider: args.provider,
+    apiKey: args.apiKey,
+    model: args.model,
+    language: args.language,
+    secondaryLanguage: args.secondaryLanguage,
+    dictionary: args.dictionary ?? [],
+    protectedTerms: args.protectedTerms ?? [],
+  });
+}
+
+export async function retranscribeLocal(args: {
+  transcriptionId: number;
+  audioAssetId: number;
+  model: string;
+  language?: string;
+  secondaryLanguage?: string;
+  dictionary?: string[];
+  protectedTerms?: string[];
+}): Promise<TranscriptionResult> {
+  return invoke("retranscribe_local", {
+    transcriptionId: args.transcriptionId,
+    audioAssetId: args.audioAssetId,
+    model: args.model,
+    language: args.language,
+    secondaryLanguage: args.secondaryLanguage,
+    dictionary: args.dictionary ?? [],
+    protectedTerms: args.protectedTerms ?? [],
+  });
+}
+
 // Reasoning
 export async function processReasoning(
   text: string,
@@ -370,7 +474,7 @@ export async function hideConversationWindow(): Promise<void> {
 // --- Settings convenience helpers ---
 
 // Agent name
-const DEFAULT_AGENT_NAME = "Aral";
+const DEFAULT_AGENT_NAME = "Agenda";
 
 export async function getAgentName(): Promise<string> {
   const name = await getSetting<string>("agentName");

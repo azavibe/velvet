@@ -31,6 +31,7 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   mistral: "Mistral",
   qwen: "Qwen",
   openrouter: "OpenRouter",
+  local: "Local",
 };
 
 export function providerDisplayName(id: string): string {
@@ -39,6 +40,7 @@ export function providerDisplayName(id: string): string {
 
 export function getTranscriptionProviders(settings: Settings): ProviderTabItem[] {
   return [
+    { id: "local", name: "Local", hasKey: true },
     { id: "openai", name: "OpenAI", hasKey: !!settings.openaiApiKey },
     { id: "groq", name: "Groq", recommended: true, hasKey: !!settings.groqApiKey },
     { id: "mistral", name: "Mistral", hasKey: !!settings.mistralApiKey },

@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { listen, emit } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
 import { Menu, MenuItem, PredefinedMenuItem } from "@tauri-apps/api/menu";
 import { getVersion } from "@tauri-apps/api/app";
-import { check } from "@tauri-apps/plugin-updater";
 import { sendNotification } from "@tauri-apps/plugin-notification";
 import { AlertTriangle, Mic } from "lucide-react";
 import { useDictation } from "@/hooks/useDictation";
@@ -54,7 +53,7 @@ function DictationOverlayInner() {
 
   const { settings, loaded } = useSettings();
 
-  // Spoken app commands ("Aral, start notes"). Recognized here because the
+  // Spoken app commands ("Agenda, start notes"). Recognized here because the
   // overlay owns dictation, but deliberately *executed* by asking the
   // Conversation window to do it — that window owns capture state, the
   // consent gate, and persona selection, so a voice-started conversation
@@ -168,19 +167,6 @@ function DictationOverlayInner() {
       }
     })();
   }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Check for updates on startup and notify settings window
-  const [updateAvailable, setUpdateAvailable] = useState(false);
-  useEffect(() => {
-    check()
-      .then((update) => {
-        if (update) {
-          setUpdateAvailable(true);
-          emit("update-available", { version: update.version });
-        }
-      })
-      .catch(() => {}); // silently ignore network errors
-  }, []);
 
   // Suspend hotkey while settings window is capturing a new shortcut
   const [hotkeyCapturing, setHotkeyCapturing] = useState(false);
@@ -424,12 +410,6 @@ function DictationOverlayInner() {
                 <LoadingDots className={motionMode === "processing" ? "overlay-processing-dots overlay-motion" : "overlay-processing-dots"} />
               ) : (
                 <Mic className="relative z-10 w-4 h-4" aria-hidden="true" />
-              )}
-              {updateAvailable && (
-                <span
-                  className="absolute right-0.5 top-0.5 z-20 w-2 h-2 rounded-full bg-warning"
-                  title={t("overlay.updateAvailable")}
-                />
               )}
             </span>
           </button>

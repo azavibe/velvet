@@ -74,6 +74,39 @@ pub fn is_known_hallucination(text: &str) -> bool {
         .any(|p| is_repetition_of(&norm, p))
 }
 
+/// True when whisper.cpp returned only a decoder control token or a
+/// non-speech caption. These are metadata, not words the user dictated, and
+/// must not be sent into correction/enhancement as if they were speech.
+pub fn is_non_speech_marker(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if let Some(timestamp) = trimmed
+        .strip_prefix("[_TT_")
+        .and_then(|value| value.strip_suffix(']'))
+    {
+        return !timestamp.is_empty() && timestamp.chars().all(|ch| ch.is_ascii_digit());
+    }
+    if trimmed.starts_with("<|") && trimmed.ends_with("|>") {
+        return true;
+    }
+    let caption = trimmed
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .or_else(|| {
+            trimmed
+                .strip_prefix('(')
+                .and_then(|value| value.strip_suffix(')'))
+        })
+        .map(str::trim)
+        .map(str::to_ascii_lowercase);
+    matches!(
+        caption.as_deref(),
+        Some("blank_audio" | "silence" | "music" | "applause" | "inaudible" | "background noise")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,5 +159,23 @@ mod tests {
     fn empty_output_is_not_a_hallucination() {
         assert!(!is_known_hallucination(""));
         assert!(!is_known_hallucination("   "));
+    }
+
+    #[test]
+    fn decoder_tokens_and_non_speech_captions_are_not_transcripts() {
+        for marker in [
+            "[_TT_654]",
+            "<|endoftext|>",
+            "[BLANK_AUDIO]",
+            "[Music]",
+            "(silence)",
+        ] {
+            assert!(
+                is_non_speech_marker(marker),
+                "marker was retained: {marker}"
+            );
+        }
+        assert!(!is_non_speech_marker("Meet me at [Home] tomorrow."));
+        assert!(!is_non_speech_marker("[Aral]"));
     }
 }

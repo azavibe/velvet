@@ -652,6 +652,7 @@ export function useLiveDictation({ onToast }: Options = {}) {
           ]);
           const settings: TranscriptionSettings = {
             cloudProvider, cloudModel, language,
+            localModel: null, localFallbackEnabled: false,
             languageMode: null, secondaryLanguage: null,
             dictionary: dict,
             useReasoning: useR, reasoningModel: rModel, reasoningProvider: rProvider,

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Copy, Trash2, ChevronDown, Mic, MessagesSquare, NotebookPen, Pencil, Sparkles, Mic2 } from "lucide-react";
+import { Copy, Trash2, ChevronDown, Mic, MessagesSquare, NotebookPen, Pencil, Sparkles, Mic2, RefreshCw, AlertTriangle, FolderOpen } from "lucide-react";
 import {
   getStats,
   getTranscriptions,
@@ -17,6 +17,8 @@ import {
   setClipboardText,
   onAudioRecoveryComplete,
   onAudioRecoveryFailed,
+  retryFailedTranscription,
+  retranscribeLocal,
   type StatsPayload,
   type Transcription,
   type ConversationSummary,
@@ -30,6 +32,9 @@ import { audioPlaybackController } from "@/services/audioPlayback";
 import { useAudioPlayback } from "@/services/useAudioPlayback";
 import { startupMark } from "@/services/startupDiagnostics";
 import { mergeUniqueById, uniqueHistoryItems } from "@/components/settings/historyList";
+import { buildTranscriptionDictionary } from "@/hooks/useTranscriptionPipeline";
+import { protectedDictionaryTerms } from "@/models/dictionary";
+import { extractAndStoreMemory } from "@/services/memory";
 
 type Loaded = { today: StatsPayload; week: StatsPayload; all: StatsPayload };
 
@@ -178,6 +183,7 @@ export default function StatisticsSection({ settings, toast }: { settings: Setti
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<{ title: string; transcript: string }>({ title: "", transcript: "" });
   const [cleaningUpId, setCleaningUpId] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
 
   useEffect(() => () => audioPlaybackController.stop(), []);
 
@@ -446,6 +452,172 @@ export default function StatisticsSection({ settings, toast }: { settings: Setti
     }
   };
 
+  const recordingPaths = (item: HistoryItem): string[] => {
+    if (item.kind === "dictation") {
+      return item.data.audio_asset?.path ? [item.data.audio_asset.path] : [];
+    }
+    if (item.kind === "conversation") {
+      return [item.data.audio_asset_me?.path, item.data.audio_asset_them?.path].filter(
+        (path): path is string => Boolean(path),
+      );
+    }
+    return item.data.audio_segments
+      .map((asset) => asset.path)
+      .filter((path): path is string => Boolean(path));
+  };
+
+  const handleOpenRecordingFolder = async (item: HistoryItem) => {
+    const paths = recordingPaths(item);
+    if (paths.length === 0) {
+      toast?.({ title: t("history.openFolderNoAudio"), variant: "destructive" });
+      return;
+    }
+    try {
+      const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
+      await revealItemInDir(paths);
+    } catch (e) {
+      toast?.({ title: t("history.openFolderFailed"), description: String(e), variant: "destructive" });
+    }
+  };
+
+  const handleRetryTranscription = async (
+    item: Extract<HistoryItem, { kind: "dictation" }>,
+  ) => {
+    const asset = item.data.audio_asset;
+    if (!asset || asset.status !== "ready") {
+      toast?.({ title: t("history.retryNoAudio"), variant: "destructive" });
+      return;
+    }
+    const provider = settings.cloudTranscriptionProvider;
+    const apiKey = (settings[`${provider}ApiKey` as keyof Settings] as string) ?? "";
+    if (!apiKey) {
+      toast?.({ title: t("history.retryNoKey"), variant: "destructive" });
+      return;
+    }
+    const dictionary = buildTranscriptionDictionary(
+      settings.customDictionary,
+      settings.agentName,
+      settings.agentAliases,
+    );
+    const protectedTerms = [
+      settings.agentName,
+      ...settings.agentAliases,
+      ...protectedDictionaryTerms(settings.customDictionary),
+    ].filter((term) => term.trim());
+
+    setRetryingId(item.id);
+    try {
+      const result = await retryFailedTranscription({
+        transcriptionId: item.data.id,
+        audioAssetId: asset.id,
+        provider,
+        apiKey,
+        model: settings.cloudTranscriptionModel,
+        language: settings.languageMode === "auto" ? "auto" : settings.preferredLanguage,
+        secondaryLanguage:
+          settings.languageMode === "bilingual"
+            ? settings.secondaryLanguage || undefined
+            : undefined,
+        dictionary,
+        protectedTerms,
+      });
+      setTranscriptions((previous) => previous.map((transcription) =>
+        transcription.id === item.data.id
+          ? {
+              ...transcription,
+              original_text: result.text,
+              processed_text: null,
+              error: null,
+              processing_method: `retry:${provider}`,
+              word_count: result.text.trim().split(/\s+/u).filter(Boolean).length,
+            }
+          : transcription,
+      ));
+      const [today, week, all] = await Promise.all([
+        getStats("today"),
+        getStats("week"),
+        getStats("all"),
+      ]);
+      setStats({ today, week, all });
+      if (settings.automaticMemoryEnabled) {
+        void extractAndStoreMemory(result.text, "dictation", item.data.id, settings);
+      }
+      toast?.({ title: t("history.retrySuccess"), variant: "success" });
+    } catch (e) {
+      toast?.({
+        title: t("history.retryFailed"),
+        description: String(e),
+        variant: "destructive",
+      });
+    } finally {
+      setRetryingId(null);
+    }
+  };
+
+  const handleLocalRetranscription = async (
+    item: Extract<HistoryItem, { kind: "dictation" }>,
+  ) => {
+    const asset = item.data.audio_asset;
+    if (!asset || asset.status !== "ready") {
+      toast?.({ title: t("history.retryNoAudio"), variant: "destructive" });
+      return;
+    }
+    if (!settings.localTranscriptionModel) {
+      toast?.({
+        title: t("history.localModelRequired"),
+        variant: "destructive",
+      });
+      return;
+    }
+    const dictionary = buildTranscriptionDictionary(
+      settings.customDictionary,
+      settings.agentName,
+      settings.agentAliases,
+    );
+    const protectedTerms = [
+      settings.agentName,
+      ...settings.agentAliases,
+      ...protectedDictionaryTerms(settings.customDictionary),
+    ].filter((term) => term.trim());
+    setRetryingId(item.id);
+    try {
+      const result = await retranscribeLocal({
+        transcriptionId: item.data.id,
+        audioAssetId: asset.id,
+        model: settings.localTranscriptionModel,
+        language: settings.languageMode === "auto" ? "auto" : settings.preferredLanguage,
+        secondaryLanguage:
+          settings.languageMode === "bilingual" ? settings.secondaryLanguage || undefined : undefined,
+        dictionary,
+        protectedTerms,
+      });
+      setTranscriptions((previous) => previous.map((transcription) =>
+        transcription.id === item.data.id
+          ? {
+              ...transcription,
+              original_text: result.text,
+              processed_text: null,
+              error: null,
+              processing_method: "retry:local",
+              word_count: result.text.trim().split(/\s+/u).filter(Boolean).length,
+            }
+          : transcription,
+      ));
+      const [today, week, all] = await Promise.all([
+        getStats("today"), getStats("week"), getStats("all"),
+      ]);
+      setStats({ today, week, all });
+      if (settings.automaticMemoryEnabled) {
+        void extractAndStoreMemory(result.text, "dictation", item.data.id, settings);
+      }
+      toast?.({ title: t("history.retrySuccess"), variant: "success" });
+    } catch (e) {
+      toast?.({ title: t("history.retryFailed"), description: String(e), variant: "destructive" });
+    } finally {
+      setRetryingId(null);
+    }
+  };
+
   return (
     <>
       {statsError ? (
@@ -505,6 +677,7 @@ export default function StatisticsSection({ settings, toast }: { settings: Setti
               const isExpanded = expandedId === item.id;
               const isConfirming = confirmDeleteId === item.id;
               const isEditing = editingId === item.id;
+              const failedDictation = item.kind === "dictation" && item.data.error != null;
               const duration =
                 item.kind === "dictation"
                   ? item.data.duration_ms != null
@@ -518,7 +691,11 @@ export default function StatisticsSection({ settings, toast }: { settings: Setti
                     : null;
               const preview =
                 item.kind === "dictation"
-                  ? snippetLines(item.data.processed_text || item.data.original_text)
+                  ? failedDictation
+                    ? item.data.error === "empty_transcription"
+                      ? t("history.emptyRecording")
+                      : t("history.transcriptionFailed")
+                    : snippetLines(item.data.processed_text || item.data.original_text)
                   : item.kind === "note"
                     ? snippetLines(
                         (item.data.body_markdown ? stripMarkdownTitle(item.data.body_markdown) : item.data.raw_transcript) ||
@@ -535,7 +712,11 @@ export default function StatisticsSection({ settings, toast }: { settings: Setti
                     className="w-full text-left px-3 py-2.5 flex items-start gap-3 hover:bg-surface-2 transition-colors"
                   >
                     {item.kind === "dictation" ? (
-                      <Mic className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" />
+                      failedDictation ? (
+                        <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-destructive" />
+                      ) : (
+                        <Mic className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" />
+                      )
                     ) : item.kind === "note" ? (
                       <NotebookPen className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" />
                     ) : (
@@ -553,6 +734,18 @@ export default function StatisticsSection({ settings, toast }: { settings: Setti
                               ? t("history.typeNote")
                               : t("history.typeConversation")}
                         </span>
+                        {failedDictation && (
+                          <span className="rounded-full bg-destructive/10 px-1.5 py-0.5 text-destructive">
+                            {t("history.failedBadge")}
+                          </span>
+                        )}
+                        {item.kind === "dictation" && item.data.processing_method.includes("local") && (
+                          <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-primary">
+                            {item.data.processing_method.includes("fallback:local")
+                              ? t("history.localFallbackBadge")
+                              : t("history.localBadge")}
+                          </span>
+                        )}
                       </div>
                       {noteTitle && (
                         <p className="text-sm font-medium text-foreground-bright mt-0.5 truncate">{noteTitle}</p>
@@ -568,7 +761,18 @@ export default function StatisticsSection({ settings, toast }: { settings: Setti
 
                   {isExpanded && (
                     <div className="px-3 pb-3 space-y-2.5">
-                      {item.kind === "dictation" && item.data.reconciled_text ? (
+                      {failedDictation ? (
+                        <div className="rounded-control border border-destructive/25 bg-destructive/5 px-3 py-2">
+                          <p className="text-sm font-medium text-destructive">
+                            {item.data.error === "empty_transcription"
+                              ? t("history.emptyRecording")
+                              : t("history.transcriptionFailed")}
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {t("history.recordingPreserved")}
+                          </p>
+                        </div>
+                      ) : item.kind === "dictation" && item.data.reconciled_text ? (
                         <div className="space-y-2 rounded-control bg-surface-2 px-3 py-2 max-h-64 overflow-y-auto">
                           <div>
                             <p className="text-[11px] font-medium text-muted-foreground">
@@ -669,8 +873,42 @@ export default function StatisticsSection({ settings, toast }: { settings: Setti
                               </Button>
                             </>
                           )}
-                          <Button variant="ghost" size="sm" onClick={() => handleCopy(item)}>
-                            <Copy className="w-3.5 h-3.5" /> {t("history.copy")}
+                          {failedDictation
+                            && item.kind === "dictation"
+                            && settings.cloudTranscriptionProvider !== "local" && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={retryingId === item.id || item.data.audio_asset?.status !== "ready"}
+                              onClick={() => void handleRetryTranscription(item)}
+                            >
+                              <RefreshCw className={`w-3.5 h-3.5 ${retryingId === item.id ? "animate-spin" : ""}`} />
+                              {retryingId === item.id ? t("history.retrying") : t("history.retry")}
+                            </Button>
+                          )}
+                          {item.kind === "dictation" && item.data.audio_asset?.status === "ready" && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={retryingId === item.id || !settings.localTranscriptionModel}
+                              onClick={() => void handleLocalRetranscription(item)}
+                            >
+                              <RefreshCw className={`w-3.5 h-3.5 ${retryingId === item.id ? "animate-spin" : ""}`} />
+                              {t("history.transcribeLocal")}
+                            </Button>
+                          )}
+                          {!failedDictation && (
+                            <Button variant="ghost" size="sm" onClick={() => handleCopy(item)}>
+                              <Copy className="w-3.5 h-3.5" /> {t("history.copy")}
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => void handleOpenRecordingFolder(item)}
+                            disabled={recordingPaths(item).length === 0}
+                          >
+                            <FolderOpen className="w-3.5 h-3.5" /> {t("history.openFolder")}
                           </Button>
                           {isConfirming ? (
                             <>

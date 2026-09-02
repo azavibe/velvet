@@ -184,14 +184,14 @@ async fn complete_chat(
     };
 
     let url = format!("{}/chat/completions", base_url);
-    log::info!("[Whisperi] POST {} (model={})", url, model);
+    log::info!("[Agenda] POST {} (model={})", url, model);
     let mut req_builder = client.post(&url).bearer_auth(api_key);
 
     // OpenRouter requires these headers for proper authentication routing
     if base_url.contains("openrouter.ai") {
         req_builder = req_builder
             .header("HTTP-Referer", "https://github.com/azavibe/agenda")
-            .header("X-Title", "Aral");
+            .header("X-Title", "Agenda");
     }
 
     let response = req_builder.json(&request).send().await?;

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { SettingsSection, SettingsRow } from "@/components/ui/SettingsSection";
 import { Toggle } from "@/components/ui/toggle";
@@ -8,11 +8,25 @@ import LiveProviderModelSelector from "./LiveProviderModelSelector";
 import { LiveConsentModal } from "@/components/ui/LiveConsentModal";
 import type { SectionProps } from "./types";
 import { Button } from "@/components/ui/button";
-import { resetMemory } from "@/services/tauriApi";
+import { listLocalModels, onLocalModelDownloadProgress, resetMemory } from "@/services/tauriApi";
 
 export default function TranscriptionSection({ settings, update, toast }: SectionProps) {
   const { t } = useTranslation();
   const [resettingMemory, setResettingMemory] = useState(false);
+  const [hasLocalModel, setHasLocalModel] = useState(false);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    const refresh = () =>
+      listLocalModels().then((models) => setHasLocalModel(models.some((model) => model.installed)));
+    void refresh();
+    void onLocalModelDownloadProgress((event) => {
+      if (event.status === "installed" || event.status === "deleted") void refresh();
+    }).then((cleanup) => {
+      unlisten = cleanup;
+    });
+    return () => unlisten?.();
+  }, []);
 
   async function handleResetMemory() {
     setResettingMemory(true);
@@ -82,14 +96,38 @@ export default function TranscriptionSection({ settings, update, toast }: Sectio
           <ProviderModelSelector
             providers={getTranscriptionProviders(settings)}
             selectedProvider={settings.cloudTranscriptionProvider}
-            selectedModel={settings.cloudTranscriptionModel}
+            selectedModel={
+              settings.cloudTranscriptionProvider === "local"
+                ? settings.localTranscriptionModel
+                : settings.cloudTranscriptionModel
+            }
             registryKey="transcriptionProviders"
             openRouterDefault="openai/gpt-audio-mini"
             onProviderChange={(id) => update("cloudTranscriptionProvider", id)}
-            onModelChange={(model) => update("cloudTranscriptionModel", model)}
+            onModelChange={(model, providerId) => {
+              if ((providerId ?? settings.cloudTranscriptionProvider) === "local") {
+                update("localTranscriptionModel", model);
+              } else {
+                update("cloudTranscriptionModel", model);
+              }
+            }}
             settings={settings}
             update={update}
           />
+          <SettingsRow
+            label={t("transcription.localFallback.label")}
+            description={
+              hasLocalModel
+                ? t("transcription.localFallback.description")
+                : t("transcription.localFallback.unavailable")
+            }
+          >
+            <Toggle
+              checked={settings.localFallbackEnabled && hasLocalModel}
+              disabled={!hasLocalModel}
+              onChange={(value) => update("localFallbackEnabled", value)}
+            />
+          </SettingsRow>
           <SettingsRow
             label={t("transcription.contextualCorrection.label")}
             description={t("transcription.contextualCorrection.description")}

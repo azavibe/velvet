@@ -1,7 +1,10 @@
-use super::ResultExt;
+use super::{ResultExt, recordings_dir};
+use crate::audio::archive;
+use crate::database::{AudioAssetStatus, Database};
 use crate::transcription;
 use serde::Serialize;
 use std::time::Duration;
+use tauri::{AppHandle, State};
 
 const COMMAND_RETRY_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_COMMAND_PROMPT_CHARS: usize = 2_048;
@@ -232,7 +235,7 @@ pub async fn transcribe_cloud(
     // Never log any part of the API key — even a 4-char prefix/suffix can leak
     // into shipped logs or bug reports. Log only whether a key is present.
     log::info!(
-        "[Whisperi] Transcribing: provider={}, model={}, has_key={}",
+        "[Agenda] Transcribing: provider={}, model={}, has_key={}",
         provider,
         model,
         !api_key.is_empty()
@@ -303,8 +306,10 @@ pub async fn transcribe_cloud(
         transcription::cloud::strip_dictionary_edge_echo(&stripped, &dictionary, &protected_terms);
     // Whole-output hallucination phrases (silence artifacts) are blanked; the
     // frontend's empty-transcription check then skips the result silently.
-    let stripped = if transcription::hallucination::is_known_hallucination(&stripped) {
-        log::info!("[Whisperi] Dropped known hallucination phrase output");
+    let stripped = if transcription::hallucination::is_known_hallucination(&stripped)
+        || transcription::hallucination::is_non_speech_marker(&stripped)
+    {
+        log::info!("[Agenda] Dropped known hallucination phrase output");
         String::new()
     } else {
         stripped
@@ -320,6 +325,169 @@ pub async fn transcribe_cloud(
         text,
         detected_language: resolved,
     })
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn transcribe_local(
+    app: AppHandle,
+    state: State<'_, std::sync::Arc<transcription::local::LocalTranscriptionState>>,
+    audio_data: Vec<u8>,
+    model: String,
+    language: Option<String>,
+    secondary_language: Option<String>,
+    dictionary: Vec<String>,
+    protected_terms: Vec<String>,
+) -> Result<TranscriptionResult, String> {
+    let model_path = super::local_models::installed_model_path(&app, &model)?;
+    let (primary, secondary, prompt, engine_lang) =
+        prepare_language_params(language, secondary_language, &dictionary);
+    let state = state.inner().clone();
+    let inference_prompt = prompt.clone();
+    let output = tauri::async_runtime::spawn_blocking(move || {
+        state.transcribe(
+            &model_path,
+            &audio_data,
+            engine_lang.as_deref(),
+            Some(inference_prompt.as_str()),
+        )
+    })
+    .await
+    .map_err(|_| "local_transcription_task_failed".to_string())??;
+
+    let stripped =
+        transcription::cloud::strip_prompt_echo(&output.0, Some(prompt.as_str()), &protected_terms);
+    let stripped =
+        transcription::cloud::strip_dictionary_edge_echo(&stripped, &dictionary, &protected_terms);
+    let stripped = if transcription::hallucination::is_known_hallucination(&stripped)
+        || transcription::hallucination::is_non_speech_marker(&stripped)
+    {
+        String::new()
+    } else {
+        stripped
+    };
+    let resolved = resolve_language(
+        primary.as_deref(),
+        secondary.as_deref(),
+        output.1.as_deref(),
+        &stripped,
+    );
+    Ok(TranscriptionResult {
+        text: transcription::finalize_chinese_text(&stripped, resolved.as_deref()),
+        detected_language: resolved,
+    })
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn retry_failed_transcription(
+    app: AppHandle,
+    db: State<'_, Database>,
+    transcription_id: i64,
+    audio_asset_id: i64,
+    provider: String,
+    api_key: String,
+    model: String,
+    language: Option<String>,
+    secondary_language: Option<String>,
+    dictionary: Vec<String>,
+    protected_terms: Vec<String>,
+) -> Result<TranscriptionResult, String> {
+    let asset = db
+        .get_audio_asset(audio_asset_id)
+        .str_err()?
+        .ok_or_else(|| "retry_audio_not_found".to_string())?;
+    if asset.owner_type != "dictation"
+        || asset.owner_id != transcription_id
+        || asset.channel != "main"
+        || asset.status != AudioAssetStatus::Ready
+    {
+        return Err("retry_audio_not_ready".to_string());
+    }
+    let raw_path = asset
+        .path
+        .as_deref()
+        .ok_or_else(|| "retry_audio_not_ready".to_string())?;
+    let root = recordings_dir(&app)?;
+    let path = archive::validated_recording_path(&root, raw_path)
+        .ok_or_else(|| "retry_audio_invalid".to_string())?;
+    let audio_data = tauri::async_runtime::spawn_blocking(move || std::fs::read(path))
+        .await
+        .map_err(|_| "retry_audio_read_failed".to_string())?
+        .map_err(|_| "retry_audio_read_failed".to_string())?;
+
+    let result = transcribe_cloud(
+        audio_data,
+        provider.clone(),
+        api_key,
+        model,
+        language,
+        secondary_language,
+        dictionary,
+        protected_terms,
+    )
+    .await?;
+    if result.text.trim().is_empty() {
+        return Err("empty_transcription".to_string());
+    }
+    db.complete_transcription_retry(transcription_id, &result.text, &provider)
+        .str_err()?;
+    Ok(result)
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn retranscribe_local(
+    app: AppHandle,
+    db: State<'_, Database>,
+    local_state: State<'_, std::sync::Arc<transcription::local::LocalTranscriptionState>>,
+    transcription_id: i64,
+    audio_asset_id: i64,
+    model: String,
+    language: Option<String>,
+    secondary_language: Option<String>,
+    dictionary: Vec<String>,
+    protected_terms: Vec<String>,
+) -> Result<TranscriptionResult, String> {
+    let asset = db
+        .get_audio_asset(audio_asset_id)
+        .str_err()?
+        .ok_or_else(|| "retry_audio_not_found".to_string())?;
+    if asset.owner_type != "dictation"
+        || asset.owner_id != transcription_id
+        || asset.channel != "main"
+        || asset.status != AudioAssetStatus::Ready
+    {
+        return Err("retry_audio_not_ready".to_string());
+    }
+    let raw_path = asset
+        .path
+        .as_deref()
+        .ok_or_else(|| "retry_audio_not_ready".to_string())?;
+    let root = recordings_dir(&app)?;
+    let path = archive::validated_recording_path(&root, raw_path)
+        .ok_or_else(|| "retry_audio_invalid".to_string())?;
+    let audio_data = tauri::async_runtime::spawn_blocking(move || std::fs::read(path))
+        .await
+        .map_err(|_| "retry_audio_read_failed".to_string())?
+        .map_err(|_| "retry_audio_read_failed".to_string())?;
+    let result = transcribe_local(
+        app,
+        local_state,
+        audio_data,
+        model,
+        language,
+        secondary_language,
+        dictionary,
+        protected_terms,
+    )
+    .await?;
+    if result.text.trim().is_empty() {
+        return Err("empty_transcription".to_string());
+    }
+    db.replace_transcription(transcription_id, &result.text, "retry:local")
+        .str_err()?;
+    Ok(result)
 }
 
 /// One command-scoped retranscription over the original in-memory recording.

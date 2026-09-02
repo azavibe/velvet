@@ -63,8 +63,8 @@ Detailed [implementation plan](plans/conversational-assistant.md).
     - [ ] Verify the clipped recording smoke is centered on the microphone circle and remains centered while dragging the overlay.
     - [ ] Verify processing uses the compact horizontal pulse without spinning/orbiting layers and stops all motion when idle or reduced motion is enabled.
 - [ ] Rebrand the application from Whisperi to Agenda without losing existing user data or installer continuity.
-  - [ ] Audit visible branding, package metadata, installer names, window titles, tray text, locales, documentation, and logs.
-  - [ ] Preserve or migrate legacy database, recordings, settings, API keys, updater identity, and application-data paths.
+  - [x] Audit visible runtime branding, product metadata, installer names, window titles, tray text, locales, and logs.
+  - [x] Preserve legacy database, recordings, settings, API keys, updater identity, and application-data paths while migrating historical default agent names.
   - [ ] Preserve the original MIT license and upstream attribution.
   - [ ] Verify upgrade installation from v0.8.8 and first-run migration on Windows.
 
@@ -88,6 +88,15 @@ Detailed [implementation plan](plans/conversational-assistant.md).
   - [x] Remove or downgrade source-dependent memory when its dictation, note, or conversation is deleted.
 - [x] Add an automatic-memory toggle and reset action without introducing a graph editor or training interface.
 - [ ] Extend memory extraction to Live dictation only after a safe completed-utterance source model is designed.
+
+### v0.11.0 — Local transcription and fallback
+
+- [x] Preserve failed and empty Standard-dictation recordings, exclude failures from analytics, and support retrying them from History.
+- [x] Add Local as a peer transcription provider with resumable, cancellable, SHA-256-verified GGML model downloads and deletion.
+- [x] Run CPU-only local inference through linked `whisper-rs`, release models after each request, and retain language/dictionary prompting.
+- [x] Fall back to the selected local model on cloud errors or missing keys, while leaving empty results, Live, Conversations, and Notes unchanged.
+- [x] Show local/fallback provenance in History and allow any archived dictation to be re-transcribed locally in place.
+- [ ] Add an optional queued batch action for multiple failed recordings after single-item retry has production usage.
 
 ### Deferred — Direct conversation and text-to-speech
 

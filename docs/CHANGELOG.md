@@ -2,6 +2,49 @@
 
 ## [Unreleased]
 
+### Highlights
+
+- Completed local model downloads now install cleanly instead of failing with HTTP 416.
+- History can reveal each archived recording directly in its folder.
+- The visible application name is now Agenda throughout the interface and installer.
+
+### Fixes
+
+- A complete resumable model file is now checksum-verified and installed before any unnecessary range request is sent.
+- The Settings window is wider so local model download controls remain visible.
+
+### Changes
+
+- Added an Open in folder action beside Copy and Delete on expanded History entries.
+- Migrated the historical default agent names Whisperi and Aral to Agenda while preserving custom names and existing application data paths.
+
+## [0.11.0] - 2026-09-02
+
+### Highlights
+
+- Standard dictation can now run privately and offline with downloadable Whisper models.
+- Cloud transcription can automatically fall back to a selected local model when a provider, network, or API key is unavailable.
+- Failed and empty recordings are preserved in History instead of being lost and can be retried later.
+
+### Features
+
+- Added Local as a transcription provider with CPU-only `whisper-rs` inference and per-request model lifetime so memory is released after transcription.
+- Added Tiny, Base, Small, and quantized Large v3 Turbo model downloads with progress, cancellation, resume, disk-space checks, exact-size validation, SHA-256 verification, and deletion.
+- Added a local-fallback setting, local/fallback engine badges, and in-place local re-transcription for any archived Standard dictation.
+- Preserved language modes and custom-dictionary prompting for local inference. Live dictation, Conversations, and Notes retain their existing cloud engines.
+
+### Fixes
+
+- Failed provider requests and empty transcription results now create recoverable History entries with their WAV recordings intact.
+- Failed recordings no longer distort total or average transcription analytics.
+- Local inference now filters whisper.cpp control tokens and non-speech captions, reports empty recognition visibly, caps CPU use at four threads, and unloads model weights after every request.
+- Native whisper.cpp decoder diagnostics are suppressed, and update checks are manual from About so an unavailable release endpoint no longer floods startup logs.
+
+### Internal
+
+- Added a static verified GGML model catalog and `{app_data}/models` storage alongside recordings.
+- Added database coverage for failed-recording statistics and in-place retry behavior.
+
 ## [0.10.0] - 2026-09-01
 
 ### Highlights

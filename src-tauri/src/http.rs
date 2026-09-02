@@ -5,7 +5,7 @@ use std::sync::LazyLock;
 
 pub static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
-        .user_agent("Aral")
+        .user_agent("Agenda")
         .connect_timeout(std::time::Duration::from_secs(15))
         .timeout(std::time::Duration::from_secs(120))
         .build()
@@ -19,7 +19,7 @@ pub async fn check_response(response: Response, context: &str) -> Result<Respons
     }
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
-    log::error!("[Whisperi] {} ({}): {}", context, status, body);
+    log::error!("[Agenda] {} ({}): {}", context, status, body);
     anyhow::bail!("{} ({}): {}", context, status, body)
 }
 

@@ -1,5 +1,6 @@
 pub mod cloud;
 pub mod hallucination;
+pub mod local;
 pub mod normalize;
 pub mod streaming;
 mod t2s_table;
